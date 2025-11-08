@@ -11,6 +11,7 @@ import net.minecraft.world.entity.ai.goal.WaterAvoidingRandomStrollGoal;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
 import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerLevel;
 
 public class ProfessorGEntity extends PathfinderMob {
     public static final String NPC_NAME = "Professor G";
@@ -40,6 +41,17 @@ public class ProfessorGEntity extends PathfinderMob {
     // Method to be called by AI bridge later
     public void executeAIAction(String action, String params) {
         // Placeholder for Phase 3
-        System.out.println("[Professor G] Executing action: " + action + " with params: " + params);
+        if (!this.level().isClientSide) {
+            System.out.println("[Professor G] Executing action: " + action + " with params: " + params);
+        }
+    }
+    
+    // Say something in chat
+    public void sayInChat(String message) {
+        if (!this.level().isClientSide && this.level() instanceof ServerLevel serverLevel) {
+            serverLevel.getServer().getPlayerList().broadcastSystemMessage(
+                Component.literal("§e[Professor G]§r " + message), false
+            );
+        }
     }
 }

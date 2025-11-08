@@ -4,11 +4,14 @@ license="MIT"
 
 [[mods]]
 modId="ainpc"
-version="${file.jarVersion}"
+version="1.0.0"
 displayName="AI NPC Mod"
 description='''
 AI-powered NPC that uses LLMs to interact with players.
 '''
+authors="HackathonTeam"
+displayURL="https://github.com/yourusername/ainpc"
+
 [[dependencies.ainpc]]
     modId="forge"
     mandatory=true
@@ -19,6 +22,6 @@ AI-powered NPC that uses LLMs to interact with players.
 [[dependencies.ainpc]]
     modId="minecraft"
     mandatory=true
-    versionRange="[1.20.1]"
+    versionRange="[1.20.1,1.21)"
     ordering="NONE"
     side="BOTH"
