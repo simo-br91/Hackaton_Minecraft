@@ -31,26 +31,20 @@ public class ProfessorGEntity extends PathfinderMob {
 
     @Override
     protected void registerGoals() {
-        // Basic AI goals - we'll replace these with AI-driven behavior later
+        // Basic AI goals - these will be overridden by AI-driven behavior
         this.goalSelector.addGoal(0, new FloatGoal(this));
         this.goalSelector.addGoal(1, new WaterAvoidingRandomStrollGoal(this, 0.6D));
         this.goalSelector.addGoal(2, new LookAtPlayerGoal(this, Player.class, 8.0F));
         this.goalSelector.addGoal(3, new RandomLookAroundGoal(this));
     }
     
-    // Method to be called by AI bridge later
-    public void executeAIAction(String action, String params) {
-        // Placeholder for Phase 3
-        if (!this.level().isClientSide) {
-            System.out.println("[Professor G] Executing action: " + action + " with params: " + params);
-        }
-    }
-    
-    // Say something in chat
+    /**
+     * Say something in chat (visible to all players)
+     */
     public void sayInChat(String message) {
         if (!this.level().isClientSide && this.level() instanceof ServerLevel serverLevel) {
             serverLevel.getServer().getPlayerList().broadcastSystemMessage(
-                Component.literal("§e[Professor G]§r " + message), false
+                Component.literal("§e[" + NPC_NAME + "]§r " + message), false
             );
         }
     }

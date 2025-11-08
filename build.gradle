@@ -46,12 +46,39 @@ minecraft {
     }
 }
 
+repositories {
+    mavenCentral()
+}
+
 dependencies {
     minecraft 'net.minecraftforge:forge:1.20.1-47.2.0'
     
-    // HTTP client for AI requests (Phase 3)
-    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    // Load JARs from libs folder
+    implementation fileTree(dir: 'libs', include: ['*.jar'])
     
-    // JSON parser for AI responses (Phase 3)
-    implementation 'com.google.code.gson:gson:2.10.1'
+    // Gson is provided by Minecraft
+    compileOnly 'com.google.code.gson:gson:2.10.1'
+}
+
+jar {
+    manifest {
+        attributes([
+            "Specification-Title": "ainpc",
+            "Specification-Vendor": "hackathonteam",
+            "Specification-Version": "1",
+            "Implementation-Title": project.name,
+            "Implementation-Version": project.version,
+            "Implementation-Vendor": "hackathonteam",
+            "Implementation-Timestamp": new Date().format("yyyy-MM-dd'T'HH:mm:ssZ")
+        ])
+    }
+    
+    // Include the libs folder JARs in the mod jar
+    from {
+        fileTree(dir: 'libs', include: ['*.jar']).collect { 
+            it.isDirectory() ? it : zipTree(it) 
+        }
+    }
+    
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
