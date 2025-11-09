@@ -51,17 +51,23 @@ public class ChatHandler {
                 level.getServer().execute(() -> {
                     AiNpcMod.LOGGER.info("[ChatHandler] AI Response: {}", response);
 
-                    if (response != null) {
-                        if (response.reply != null && !response.reply.isEmpty()) {
-                            nearestNPC.sayInChat(response.reply);
+                    if (response != null && response.action != null) {
+                        // Get the chat response
+                        String chatResponse = response.action.chat_response;
+                        if (chatResponse != null && !chatResponse.isEmpty()) {
+                            nearestNPC.sayInChat(chatResponse);
                         }
 
-                        if (response.action != null && !response.action.equals("say")) {
-                            nearestNPC.executeAIAction(response.action, response.action_params);
+                        // Execute action if it's not just "say"
+                        String actionType = response.action.action_type;
+                        if (actionType != null && !actionType.equals("say") && !actionType.equals("respond_chat")) {
+                            // Build action params from the response
+                            String params = response.getActionParams();
+                            nearestNPC.executeAIAction(actionType, params);
                         }
                     }
                 });
-            } // ✅ ADDED: Closing brace for onSuccess method
+            }
 
             @Override
             public void onFailure(String error) {
@@ -73,11 +79,9 @@ public class ChatHandler {
                             Component.literal("§c[AI Error]§r " + error)
                     );
                 });
-            } // ✅ ADDED: Closing brace for onFailure method
-
-         // ✅ ADDED: Closing brace for onError method
-        }); // ✅ ADDED: Closing brace for anonymous Callback class
-    } // ✅ Closing brace for onPlayerChat method
+            }
+        });
+    }
 
     private static ProfessorGEntity findNearestProfessorG(ServerLevel level, ServerPlayer player) {
         double nearestDistance = Double.MAX_VALUE;
@@ -94,6 +98,5 @@ public class ChatHandler {
         }
 
         return nearest;
-    } // ✅ Closing brace for findNearestProfessorG method
-
-} // ✅ Closing brace for ChatHandler class
+    }
+}

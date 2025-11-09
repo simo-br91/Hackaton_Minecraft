@@ -16,8 +16,8 @@ import java.util.concurrent.CompletableFuture;
  * Uses Java 11+ built-in HttpClient (NO external dependencies!)
  */
 public class AiBridgeService {
-    // Python Flask server endpoint
-    private static final String AI_API_URL = "http://localhost:5000/api/npc_interact";
+    // ✅ FIXED: Changed localhost to 127.0.0.1 to avoid IPv6 issues
+    private static final String AI_API_URL = "http://127.0.0.1:5000/api/npc_interact";
 
     // HTTP client with timeouts
     private static final HttpClient client = HttpClient.newBuilder()
@@ -62,8 +62,9 @@ public class AiBridgeService {
         futureResponse.whenComplete((response, error) -> {
             if (error != null) {
                 // Connection failed
-                AiNpcMod.LOGGER.error("[AI Bridge] Failed to reach Python server: {}", error.getMessage());
-                callback.onFailure("AI system is offline. Is Python server running?");
+                AiNpcMod.LOGGER.error("[AI Bridge] Failed to reach Python server: {}", error.getClass().getSimpleName());
+                AiNpcMod.LOGGER.error("[AI Bridge] Error details: {}", error.getMessage());
+                callback.onFailure("AI system is offline. Is Python server running on http://127.0.0.1:5000?");
                 return;
             }
 
@@ -100,5 +101,5 @@ public class AiBridgeService {
     public interface Callback {
         void onSuccess(NpcInteractionResponse response);
         void onFailure(String error);
-    } // ✅ FIXED: Added closing brace for interface
-} // ✅ FIXED: Added closing brace for class
+    }
+}
