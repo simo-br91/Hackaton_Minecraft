@@ -2,8 +2,8 @@ package com.hackathon.ainpc.networking;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonObject;
 import com.hackathon.ainpc.AiNpcMod;
-import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -12,11 +12,13 @@ import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * Phase 5: Enhanced AI Bridge with memory and state support
- * Uses Java 11+ built-in HttpClient (no external dependencies)
+ * Enhanced AI Bridge Service for Phase 5+
+ * Adds event recording and relationship querying
  */
 public class AiBridgeService {
-    private static final String AI_API_URL = "http://127.0.0.1:5000/api/npc_interact";
+    private static final String AI_API_URL = "http://127.0.0.1:5000/api/npc_interact_enhanced";
+    private static final String EVENT_API_URL = "http://127.0.0.1:5000/api/npc_event";
+    private static final String RELATIONSHIP_API_URL = "http://127.0.0.1:5000/api/npc_relationship";
     private static final String STATE_API_URL = "http://127.0.0.1:5000/api/npc_state";
 
     private static final HttpClient client = HttpClient.newBuilder()
@@ -28,15 +30,14 @@ public class AiBridgeService {
             .create();
 
     /**
-     * Send interaction to AI backend
+     * Send interaction to AI backend (ENHANCED version)
      */
     public static void sendToAI(String player, String npcId, String message, Callback callback) {
         NpcInteractionRequest requestData = new NpcInteractionRequest(player, npcId, message);
         String jsonPayload = GSON.toJson(requestData);
 
-        AiNpcMod.LOGGER.info("[AI Bridge] Sending to Python: player={}, npc={}, message={}",
-                player, npcId, message);
-        AiNpcMod.LOGGER.debug("[AI Bridge] JSON payload: {}", jsonPayload);
+        AiNpcMod.LOGGER.info("[AI Bridge Enhanced] Sending: player={}, message={}",
+                player, message);
 
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(AI_API_URL))
@@ -50,42 +51,128 @@ public class AiBridgeService {
 
         futureResponse.whenComplete((response, error) -> {
             if (error != null) {
-                AiNpcMod.LOGGER.error("[AI Bridge] Connection failed: {}", error.getMessage());
-                callback.onFailure("AI system offline. Is Python server running?");
+                AiNpcMod.LOGGER.error("[AI Bridge Enhanced] Connection failed: {}", error.getMessage());
+                callback.onFailure("AI system offline");
                 return;
             }
 
             try {
                 String responseBody = response.body();
-                AiNpcMod.LOGGER.debug("[AI Bridge] Received JSON: {}", responseBody);
 
                 if (response.statusCode() == 200) {
-                    NpcInteractionResponse npcResponse = GSON.fromJson(responseBody, NpcInteractionResponse.class);
+                    NpcInteractionResponse npcResponse = GSON.fromJson(
+                            responseBody, 
+                            NpcInteractionResponse.class
+                    );
                     
                     if (npcResponse == null) {
-                        AiNpcMod.LOGGER.error("[AI Bridge] Response was null");
-                        callback.onFailure("AI returned empty response.");
+                        callback.onFailure("Empty AI response");
                         return;
                     }
 
-                    AiNpcMod.LOGGER.info("[AI Bridge] Success: action={}, emotion={}",
+                    AiNpcMod.LOGGER.info("[AI Bridge Enhanced] Success: action={}, emotion={}",
                             npcResponse.action.actionType,
                             npcResponse.newState.emotion);
                     
                     callback.onSuccess(npcResponse);
                 } else {
-                    AiNpcMod.LOGGER.error("[AI Bridge] Server error code: {}", response.statusCode());
-                    callback.onFailure("Python server error: " + response.statusCode());
+                    callback.onFailure("Server error: " + response.statusCode());
                 }
             } catch (Exception e) {
-                AiNpcMod.LOGGER.error("[AI Bridge] JSON parsing failed: {}", e.getMessage());
-                callback.onFailure("Could not parse AI response.");
+                AiNpcMod.LOGGER.error("[AI Bridge Enhanced] Parse failed: {}", e.getMessage());
+                callback.onFailure("Could not parse response");
             }
         });
     }
 
     /**
-     * Poll NPC state from backend
+     * Send event to AI backend (combat, social, environmental)
+     */
+    public static void sendEvent(JsonObject eventPayload, EventCallback callback) {
+        String jsonPayload = GSON.toJson(eventPayload);
+
+        AiNpcMod.LOGGER.debug("[AI Bridge] Sending event: {}", 
+                eventPayload.get("event_type").getAsString());
+
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(EVENT_API_URL))
+                .timeout(Duration.ofSeconds(5))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(jsonPayload))
+                .build();
+
+        CompletableFuture<HttpResponse<String>> futureResponse =
+                client.sendAsync(request, HttpResponse.BodyHandlers.ofString());
+
+        futureResponse.whenComplete((response, error) -> {
+            if (error != null) {
+                AiNpcMod.LOGGER.error("[AI Bridge] Event send failed: {}", error.getMessage());
+                callback.onFailure("Could not send event");
+                return;
+            }
+
+            try {
+                if (response.statusCode() == 200) {
+                    String responseBody = response.body();
+                    JsonObject jsonResponse = GSON.fromJson(responseBody, JsonObject.class);
+                    callback.onSuccess(jsonResponse);
+                } else {
+                    callback.onFailure("Event error: " + response.statusCode());
+                }
+            } catch (Exception e) {
+                AiNpcMod.LOGGER.error("[AI Bridge] Event parse failed: {}", e.getMessage());
+                callback.onFailure("Could not parse event response");
+            }
+        });
+    }
+
+    /**
+     * Get relationship status with specific entity
+     */
+    public static void getRelationship(String npcId, String entityName, RelationshipCallback callback) {
+        String url = RELATIONSHIP_API_URL + 
+                "?npc_id=" + npcId.replace(" ", "%20") +
+                "&entity=" + entityName.replace(" ", "%20");
+
+        AiNpcMod.LOGGER.debug("[AI Bridge] Querying relationship: {} with {}", npcId, entityName);
+
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .timeout(Duration.ofSeconds(5))
+                .GET()
+                .build();
+
+        CompletableFuture<HttpResponse<String>> futureResponse =
+                client.sendAsync(request, HttpResponse.BodyHandlers.ofString());
+
+        futureResponse.whenComplete((response, error) -> {
+            if (error != null) {
+                AiNpcMod.LOGGER.error("[AI Bridge] Relationship query failed: {}", error.getMessage());
+                callback.onFailure("Could not query relationship");
+                return;
+            }
+
+            try {
+                if (response.statusCode() == 200) {
+                    String responseBody = response.body();
+                    JsonObject relationship = GSON.fromJson(responseBody, JsonObject.class);
+                    
+                    AiNpcMod.LOGGER.debug("[AI Bridge] Relationship: status={}", 
+                            relationship.get("status").getAsString());
+                    
+                    callback.onSuccess(relationship);
+                } else {
+                    callback.onFailure("Relationship error: " + response.statusCode());
+                }
+            } catch (Exception e) {
+                AiNpcMod.LOGGER.error("[AI Bridge] Relationship parse failed: {}", e.getMessage());
+                callback.onFailure("Could not parse relationship");
+            }
+        });
+    }
+
+    /**
+     * Poll NPC state (existing method - kept for compatibility)
      */
     public static void pollState(String npcId, StateCallback callback) {
         String url = STATE_API_URL + "?npc_id=" + npcId.replace(" ", "%20");
@@ -101,33 +188,40 @@ public class AiBridgeService {
 
         futureResponse.whenComplete((response, error) -> {
             if (error != null) {
-                AiNpcMod.LOGGER.error("[AI Bridge] State poll failed: {}", error.getMessage());
-                callback.onFailure("Cannot reach AI server");
+                callback.onFailure("State poll failed");
                 return;
             }
 
             try {
                 if (response.statusCode() == 200) {
                     String responseBody = response.body();
-                    NPCStateResponse stateResponse = GSON.fromJson(responseBody, NPCStateResponse.class);
-                    
-                    AiNpcMod.LOGGER.debug("[AI Bridge] State poll: emotion={}, objective={}",
-                            stateResponse.emotion,
-                            stateResponse.currentObjective);
-                    
+                    NPCStateResponse stateResponse = GSON.fromJson(
+                            responseBody, 
+                            NPCStateResponse.class
+                    );
                     callback.onSuccess(stateResponse);
                 } else {
-                    callback.onFailure("State poll error: " + response.statusCode());
+                    callback.onFailure("State error: " + response.statusCode());
                 }
             } catch (Exception e) {
-                AiNpcMod.LOGGER.error("[AI Bridge] State parse failed: {}", e.getMessage());
-                callback.onFailure("Could not parse state response.");
+                callback.onFailure("Could not parse state");
             }
         });
     }
 
+    // Callback interfaces
     public interface Callback {
         void onSuccess(NpcInteractionResponse response);
+        void onFailure(String error);
+    }
+
+    public interface EventCallback {
+        void onSuccess(JsonObject response);
+        void onFailure(String error);
+    }
+
+    public interface RelationshipCallback {
+        void onSuccess(JsonObject relationship);
         void onFailure(String error);
     }
 
