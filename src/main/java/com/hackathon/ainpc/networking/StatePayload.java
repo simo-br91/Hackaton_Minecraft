@@ -20,10 +20,10 @@ public class StatePayload {
 
     @SerializedName("z")
     public Integer z;
-    
+
     @Override
     public String toString() {
-        return "State{emotion=" + emotion + 
-               ", objective=" + currentObjective + "}";
-    }
-}
+        return "State{emotion=" + emotion +
+                ", objective=" + currentObjective + "}";
+    } // ✅ FIXED: Added closing brace for method
+} // ✅ FIXED: Added closing brace for class

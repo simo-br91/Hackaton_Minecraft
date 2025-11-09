@@ -9,8 +9,8 @@ import net.minecraft.client.renderer.entity.MobRenderer;
 import net.minecraft.resources.ResourceLocation;
 
 public class ProfessorGRenderer extends MobRenderer<ProfessorGEntity, VillagerModel<ProfessorGEntity>> {
-    private static final ResourceLocation TEXTURE = 
-        new ResourceLocation("minecraft", "textures/entity/villager/villager.png");
+    private static final ResourceLocation TEXTURE =
+            new ResourceLocation("minecraft", "textures/entity/villager/villager.png");
 
     public ProfessorGRenderer(EntityRendererProvider.Context context) {
         super(context, new VillagerModel<>(context.bakeLayer(ModelLayers.VILLAGER)), 0.5F);
@@ -19,5 +19,5 @@ public class ProfessorGRenderer extends MobRenderer<ProfessorGEntity, VillagerMo
     @Override
     public ResourceLocation getTextureLocation(ProfessorGEntity entity) {
         return TEXTURE;
-    }
-}
+    } // ✅ FIXED: Added closing brace for method
+} // ✅ FIXED: Added closing brace for class

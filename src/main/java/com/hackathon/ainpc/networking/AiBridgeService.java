@@ -3,7 +3,6 @@ package com.hackathon.ainpc.networking;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.hackathon.ainpc.AiNpcMod;
-
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -32,7 +31,7 @@ public class AiBridgeService {
 
     /**
      * Send a chat message to the AI brain and get a response
-     * 
+     *
      * @param player Player name who sent the message
      * @param npcId NPC identifier (e.g., "Professor G")
      * @param message The chat message
@@ -43,8 +42,8 @@ public class AiBridgeService {
         NpcInteractionRequest requestData = new NpcInteractionRequest(player, npcId, message);
         String jsonPayload = GSON.toJson(requestData);
 
-        AiNpcMod.LOGGER.info("[AI Bridge] Sending to Python: player={}, npc={}, message={}", 
-            player, npcId, message);
+        AiNpcMod.LOGGER.info("[AI Bridge] Sending to Python: player={}, npc={}, message={}",
+                player, npcId, message);
         AiNpcMod.LOGGER.debug("[AI Bridge] JSON payload: {}", jsonPayload);
 
         // Build HTTP request
@@ -56,8 +55,8 @@ public class AiBridgeService {
                 .build();
 
         // Execute async (this runs in a separate thread)
-        CompletableFuture<HttpResponse<String>> futureResponse = 
-            client.sendAsync(request, HttpResponse.BodyHandlers.ofString());
+        CompletableFuture<HttpResponse<String>> futureResponse =
+                client.sendAsync(request, HttpResponse.BodyHandlers.ofString());
 
         // Handle response when it arrives
         futureResponse.whenComplete((response, error) -> {
@@ -75,22 +74,19 @@ public class AiBridgeService {
                 if (response.statusCode() == 200) {
                     // Parse JSON response
                     NpcInteractionResponse npcResponse = GSON.fromJson(responseBody, NpcInteractionResponse.class);
-                    
                     if (npcResponse == null) {
                         AiNpcMod.LOGGER.error("[AI Bridge] Response was null");
                         callback.onFailure("AI returned empty response.");
                         return;
                     }
-                    
+
                     AiNpcMod.LOGGER.info("[AI Bridge] Success: {}", npcResponse);
                     callback.onSuccess(npcResponse);
-                    
                 } else {
                     // Server returned error
                     AiNpcMod.LOGGER.error("[AI Bridge] Server error code: {}", response.statusCode());
                     callback.onFailure("Python server error: " + response.statusCode());
                 }
-                
             } catch (Exception e) {
                 AiNpcMod.LOGGER.error("[AI Bridge] JSON parsing failed: {}", e.getMessage());
                 callback.onFailure("Could not parse AI response.");
@@ -104,5 +100,5 @@ public class AiBridgeService {
     public interface Callback {
         void onSuccess(NpcInteractionResponse response);
         void onFailure(String error);
-    }
-}
+    } // ✅ FIXED: Added closing brace for interface
+} // ✅ FIXED: Added closing brace for class

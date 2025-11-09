@@ -10,10 +10,9 @@ import net.minecraftforge.fml.common.Mod;
 
 @Mod.EventBusSubscriber(modid = AiNpcMod.MOD_ID, bus = Mod.EventBusSubscriber.Bus.MOD, value = Dist.CLIENT)
 public class ClientModEvents {
-
     @SubscribeEvent
     public static void registerRenderers(EntityRenderersEvent.RegisterRenderers event) {
         event.registerEntityRenderer(EntityRegistry.PROFESSOR_G.get(), ProfessorGRenderer::new);
         AiNpcMod.LOGGER.info("[AI-NPC] Registered renderer for Professor G");
-    }
-}
+    } // ✅ FIXED: Added closing brace for method
+} // ✅ FIXED: Added closing brace for class

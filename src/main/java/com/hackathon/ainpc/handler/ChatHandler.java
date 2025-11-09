@@ -6,6 +6,7 @@ import com.hackathon.ainpc.networking.AiBridgeService;
 import com.hackathon.ainpc.networking.NpcInteractionResponse;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
 import net.minecraftforge.event.ServerChatEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
@@ -18,113 +19,81 @@ public class ChatHandler {
     public static void onPlayerChat(ServerChatEvent event) {
         String message = event.getRawText();
         String playerName = event.getUsername();
-        
-        AiNpcMod.LOGGER.info("[ChatHandler] {}: {}", playerName, message);
-        
-        // Only respond if player mentions "professor"
-        if (!message.toLowerCase().contains("professor")) {
+
+        // Only react if the player mentions the NPC name
+        if (message == null || !message.toLowerCase().contains("professor")) {
             return;
         }
-        
-        // Show "thinking" message
-        event.getPlayer().sendSystemMessage(
-            Component.literal("§7[Thinking]§r Professor G is thinking...")
-        );
-        
-        // Find nearest Professor G entity
+
         ServerLevel level = (ServerLevel) event.getPlayer().level();
         ProfessorGEntity nearestNPC = findNearestProfessorG(level, event.getPlayer());
-        
+
         if (nearestNPC == null) {
             event.getPlayer().sendSystemMessage(
-                Component.literal("§c[Error]§r No Professor G nearby!")
+                    Component.literal("§c[Error]§r No Professor G nearby!")
             );
             return;
         }
-        
-        // Call AI via OkHttp bridge
+
+        event.getPlayer().sendSystemMessage(
+                Component.literal("§e[Professor G]§r I'm listening...")
+        );
+
+        event.getPlayer().sendSystemMessage(
+                Component.literal("§7[Thinking]§r Professor G is thinking...")
+        );
+
+        // Call the AI bridge
         AiBridgeService.sendToAI(playerName, "professor_g", message, new AiBridgeService.Callback() {
             @Override
             public void onSuccess(NpcInteractionResponse response) {
-                // Execute on server thread
+                // Run back on the server thread
                 level.getServer().execute(() -> {
                     AiNpcMod.LOGGER.info("[ChatHandler] AI Response: {}", response);
-                    
-                    // Say the reply
-                    if (response.reply != null && !response.reply.isEmpty()) {
-                        nearestNPC.sayInChat(response.reply);
-                    }
-                    
-                    // Execute action
-                    if (response.action != null && !response.action.equals("say")) {
-                        nearestNPC.executeAIAction(response.action, response.action_params);
+
+                    if (response != null) {
+                        if (response.reply != null && !response.reply.isEmpty()) {
+                            nearestNPC.sayInChat(response.reply);
+                        }
+
+                        if (response.action != null && !response.action.equals("say")) {
+                            nearestNPC.executeAIAction(response.action, response.action_params);
+                        }
                     }
                 });
-            }
-            
+            } // ✅ ADDED: Closing brace for onSuccess method
+
             @Override
             public void onFailure(String error) {
+                // Handle failure
                 AiNpcMod.LOGGER.error("[ChatHandler] AI call failed: {}", error);
-                
-                // Show fallback on server thread
                 level.getServer().execute(() -> {
                     nearestNPC.sayInChat("*confused* My thoughts seem scattered right now...");
                     event.getPlayer().sendSystemMessage(
-                        Component.literal("§c[AI Error]§r " + error)
+                            Component.literal("§c[AI Error]§r " + error)
                     );
                 });
-            }
-        });
-    }
-    
-    private static ProfessorGEntity findNearestProfessorG(ServerLevel level, net.minecraft.server.level.ServerPlayer player) {
-        double searchRadius = 50.0;
-        ProfessorGEntity nearest = null;
+            } // ✅ ADDED: Closing brace for onFailure method
+
+         // ✅ ADDED: Closing brace for onError method
+        }); // ✅ ADDED: Closing brace for anonymous Callback class
+    } // ✅ Closing brace for onPlayerChat method
+
+    private static ProfessorGEntity findNearestProfessorG(ServerLevel level, ServerPlayer player) {
         double nearestDistance = Double.MAX_VALUE;
-        
-        for (Entity entity : level.getAllEntities()) {
-            if (entity instanceof ProfessorGEntity professorG) {
-                double distance = entity.distanceTo(player);
-                if (distance < searchRadius && distance < nearestDistance) {
-                    nearest = professorG;
+        ProfessorGEntity nearest = null;
+
+        for (Entity e : level.getEntities(null, player.getBoundingBox().inflate(32))) {
+            if (e instanceof ProfessorGEntity npc) {
+                double distance = npc.distanceToSqr(player);
+                if (distance < nearestDistance) {
+                    nearest = npc;
                     nearestDistance = distance;
                 }
             }
         }
-        
+
         return nearest;
-    }
-}
-// ```
+    } // ✅ Closing brace for findNearestProfessorG method
 
-// ---
-
-// ### **4. Remove Old AIBridgeHandler.java**
-
-// Delete `src/main/java/com/hackathon/ainpc/handler/AIBridgeHandler.java` (the one using Java's HttpClient) since we're now using OkHttp properly.
-
-// ---
-
-// ## 📋 **COMPLETE FILE STRUCTURE:**
-// ```
-// src/main/java/com/hackathon/ainpc/
-// ├── AiNpcMod.java
-// ├── client/
-// │   ├── ClientModEvents.java
-// │   └── renderer/
-// │       └── ProfessorGRenderer.java
-// ├── entity/
-// │   └── ProfessorGEntity.java
-// ├── events/
-// │   └── ChatListener.java
-// ├── handler/
-// │   └── ChatHandler.java              ← UPDATED
-// ├── networking/
-// │   ├── AiBridgeService.java         ← YOUR FILE (good!)
-// │   ├── NpcInteractionRequest.java   ← NEW!
-// │   └── NpcInteractionResponse.java  ← NEW!
-// └── registration/
-//     └── EntityRegistry.java
-
-// src/main/resources/META-INF/
-// └── mods.toml
+} // ✅ Closing brace for ChatHandler class

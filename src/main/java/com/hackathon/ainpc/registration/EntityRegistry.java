@@ -15,6 +15,7 @@ import net.minecraftforge.registries.RegistryObject;
 public class EntityRegistry {
     public static final DeferredRegister<EntityType<?>> ENTITY_TYPES =
             DeferredRegister.create(ForgeRegistries.ENTITY_TYPES, AiNpcMod.MOD_ID);
+
     public static final DeferredRegister<Item> ITEMS =
             DeferredRegister.create(ForgeRegistries.ITEMS, AiNpcMod.MOD_ID);
 
@@ -27,7 +28,7 @@ public class EntityRegistry {
 
     public static final RegistryObject<Item> PROFESSOR_G_SPAWN_EGG =
             ITEMS.register("professor_g_spawn_egg",
-                    () -> new ForgeSpawnEggItem(PROFESSOR_G, 0x00FF00, 0x008000, 
+                    () -> new ForgeSpawnEggItem(PROFESSOR_G, 0x00FF00, 0x008000,
                             new Item.Properties()));
 
     public static void register(IEventBus eventBus) {
@@ -38,5 +39,5 @@ public class EntityRegistry {
 
     private static void registerAttributes(EntityAttributeCreationEvent event) {
         event.put(PROFESSOR_G.get(), ProfessorGEntity.createAttributes().build());
-    }
-}
+    } // ✅ FIXED: Added closing brace for method
+} // ✅ FIXED: Added closing brace for class

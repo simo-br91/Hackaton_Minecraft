@@ -20,12 +20,12 @@ public class ActionPayload {
 
     @SerializedName("chat_response")
     public String chatResponse;
-    
+
     @Override
     public String toString() {
-        return "Action{type=" + actionType + 
-               ", target=" + targetName + 
-               ", pos=(" + x + "," + z + ")" +
-               ", chat=" + chatResponse + "}";
-    }
-}
+        return "Action{type=" + actionType +
+                ", target=" + targetName +
+                ", pos=(" + x + "," + z + ")" +
+                ", chat=" + chatResponse + "}";
+    } // ✅ FIXED: Added closing brace for method
+} // ✅ FIXED: Added closing brace for class

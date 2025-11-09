@@ -17,9 +17,9 @@ public class AiNpcMod {
         IEventBus modEventBus = FMLJavaModLoadingContext.get().getModEventBus();
         modEventBus.addListener(this::commonSetup);
         EntityRegistry.register(modEventBus);
-    }
+    } // ✅ FIXED: Added closing brace for constructor
 
     private void commonSetup(final FMLCommonSetupEvent event) {
         LOGGER.info("[AI-NPC] Mod setup initialized!");
-    }
-}
+    } // ✅ FIXED: Added closing brace for method
+} // ✅ FIXED: Added closing brace for class

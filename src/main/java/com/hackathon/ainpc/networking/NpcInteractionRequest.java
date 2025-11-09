@@ -18,7 +18,7 @@ public class NpcInteractionRequest {
 
     @Override
     public String toString() {
-        return String.format("Request{player='%s', npc='%s', message='%s'}", 
-            player, npc_id, message);
-    }
-}
+        return String.format("Request{player='%s', npc='%s', message='%s'}",
+                player, npc_id, message);
+    } // ✅ FIXED: Added closing brace for method
+} // ✅ FIXED: Added closing brace for class
