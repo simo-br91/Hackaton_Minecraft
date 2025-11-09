@@ -31,6 +31,11 @@ public class EnhancedEventHandler {
             return;
         }
 
+        // CRITICAL: Only process on server side
+        if (npc.level().isClientSide) {
+            return;
+        }
+
         // Skip if cancelled or no damage
         if (event.isCanceled() || event.getAmount() <= 0) {
             return;
@@ -70,11 +75,13 @@ public class EnhancedEventHandler {
                 weapon
         );
 
-        // Make NPC react immediately
-        npc.level().getServer().execute(() -> {
-            // Check relationship and react
-            checkRelationshipAndReact(npc, attackerName, damage);
-        });
+        // Make NPC react immediately (server is already available here)
+        if (npc.level().getServer() != null) {
+            npc.level().getServer().execute(() -> {
+                // Check relationship and react
+                checkRelationshipAndReact(npc, attackerName, damage);
+            });
+        }
     }
 
     /**
@@ -82,6 +89,7 @@ public class EnhancedEventHandler {
      */
     @SubscribeEvent
     public static void onEntityDeath(LivingDeathEvent event) {
+        // Only process on server side
         if (event.getEntity().level().isClientSide) {
             return;
         }
@@ -123,6 +131,11 @@ public class EnhancedEventHandler {
     @SubscribeEvent
     public static void onPlayerInteract(PlayerInteractEvent.EntityInteract event) {
         if (!(event.getTarget() instanceof ProfessorGEntity npc)) {
+            return;
+        }
+
+        // Only process on server side
+        if (event.getEntity().level().isClientSide) {
             return;
         }
 
@@ -243,6 +256,11 @@ public class EnhancedEventHandler {
      * Check relationship and make NPC react to attacks
      */
     private static void checkRelationshipAndReact(ProfessorGEntity npc, String attackerName, float damage) {
+        // Safety check
+        if (npc == null || npc.level().isClientSide || npc.level().getServer() == null) {
+            return;
+        }
+
         // Query relationship status from Python
         AiBridgeService.getRelationship("Professor G", attackerName, 
                 new AiBridgeService.RelationshipCallback() {
