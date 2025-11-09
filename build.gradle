@@ -3,6 +3,7 @@ plugins {
     id 'idea'
     id 'maven-publish'
     id 'net.minecraftforge.gradle' version '[6.0,6.2)'
+    id 'com.github.johnrengelman.shadow' version '8.1.1'
 }
 
 version = '1.0'
@@ -12,7 +13,15 @@ base {
     archivesName = 'ainpc'
 }
 
-java.toolchain.languageVersion = JavaLanguageVersion.of(17)
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+}
+
+tasks.withType(JavaCompile) {
+    options.encoding = 'UTF-8'
+}
 
 minecraft {
     mappings channel: 'official', version: '1.20.1'
@@ -25,9 +34,7 @@ minecraft {
             property 'forge.enabledGameTestNamespaces', 'ainpc'
 
             mods {
-                ainpc {
-                    source sourceSets.main
-                }
+                ainpc { source sourceSets.main }
             }
         }
 
@@ -38,9 +45,7 @@ minecraft {
             property 'forge.enabledGameTestNamespaces', 'ainpc'
 
             mods {
-                ainpc {
-                    source sourceSets.main
-                }
+                ainpc { source sourceSets.main }
             }
         }
     }
@@ -50,35 +55,73 @@ repositories {
     mavenCentral()
 }
 
+configurations {
+    shade
+    implementation.extendsFrom shade
+    runtimeClasspath.extendsFrom shade   // ensures the run classpath feeds ModLauncher
+}
+
 dependencies {
     minecraft 'net.minecraftforge:forge:1.20.1-47.2.0'
+
+    // OkHttp and dependencies
+    shade 'com.squareup.okhttp3:okhttp:4.12.0'
+    shade 'com.squareup.okio:okio-jvm:3.6.0'
+    shade 'org.jetbrains.kotlin:kotlin-stdlib:1.9.10'
     
-    // Load JARs from libs folder
-    implementation fileTree(dir: 'libs', include: ['*.jar'])
-    
-    // Gson is provided by Minecraft
+    // Gson is already provided by Minecraft
     compileOnly 'com.google.code.gson:gson:2.10.1'
 }
 
-jar {
+shadowJar {
+    archiveClassifier = ''
+    configurations = [project.configurations.shade]
+
+    // Relocate to avoid conflicts
+    relocate 'okhttp3', 'com.hackathon.ainpc.shadow.okhttp3'
+    relocate 'okio', 'com.hackathon.ainpc.shadow.okio'
+    relocate 'kotlin', 'com.hackathon.ainpc.shadow.kotlin'
+
+    // Exclude Minecraft/Forge classes
+    exclude 'META-INF/versions/**'
+    exclude 'META-INF/*.SF'
+    exclude 'META-INF/*.DSA'
+    exclude 'META-INF/*.RSA'
+
     manifest {
         attributes([
-            "Specification-Title": "ainpc",
-            "Specification-Vendor": "hackathonteam",
-            "Specification-Version": "1",
-            "Implementation-Title": project.name,
-            "Implementation-Version": project.version,
-            "Implementation-Vendor": "hackathonteam",
-            "Implementation-Timestamp": new Date().format("yyyy-MM-dd'T'HH:mm:ssZ")
+            "Specification-Title"     : "ainpc",
+            "Specification-Vendor"    : "hackathonteam",
+            "Specification-Version"   : "1",
+            "Implementation-Title"    : project.name,
+            "Implementation-Version"  : project.version,
+            "Implementation-Vendor"   : "hackathonteam",
+            "Implementation-Timestamp": new Date().format("yyyy-MM-dd'T'HH:mm:ssZ"),
+            "FMLModType"              : "MOD"
         ])
     }
-    
-    // Include the libs folder JARs in the mod jar
-    from {
-        fileTree(dir: 'libs', include: ['*.jar']).collect { 
-            it.isDirectory() ? it : zipTree(it) 
-        }
-    }
-    
+
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
+
+reobf {
+    shadowJar {}
+}
+
+jar {
+    archiveClassifier = 'thin'
+    manifest {
+        attributes([
+            "Specification-Title"     : "ainpc",
+            "Specification-Vendor"    : "hackathonteam",
+            "Specification-Version"   : "1",
+            "Implementation-Title"    : project.name,
+            "Implementation-Version"  : project.version,
+            "Implementation-Vendor"   : "hackathonteam",
+            "Implementation-Timestamp": new Date().format("yyyy-MM-dd'T'HH:mm:ssZ"),
+            "FMLModType"              : "MOD"
+        ])
+    }
+}
+
+tasks.build.dependsOn tasks.shadowJar

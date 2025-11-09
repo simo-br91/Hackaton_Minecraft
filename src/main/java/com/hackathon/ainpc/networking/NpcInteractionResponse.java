@@ -1,22 +1,18 @@
 package com.hackathon.ainpc.networking;
 
-import com.google.gson.annotations.SerializedName;
-
 /**
- * Complete response from Python AI backend
+ * Response from Python AI server
  */
 public class NpcInteractionResponse {
-    @SerializedName("action")
-    public ActionPayload action;
+    public String reply;           // What NPC says
+    public String action;          // Action to perform: "say", "move_to", "attack_target", "follow", "emote"
+    public String action_params;   // Parameters for the action (e.g., coordinates, target type)
+    public String emotion_update;  // Emotion state change
+    public String memory_patch;    // Memory to save
 
-    @SerializedName("new_state")
-    public StatePayload newState;
-    
     @Override
     public String toString() {
-        return "NPCResponse{" + 
-               "action=" + (action != null ? action.toString() : "null") + 
-               ", state=" + (newState != null ? newState.toString() : "null") + 
-               "}";
+        return String.format("Response{reply='%s', action='%s', params='%s'}", 
+            reply, action, action_params);
     }
 }
