@@ -4,6 +4,7 @@ import com.hackathon.ainpc.AiNpcMod;
 import com.hackathon.ainpc.entity.ProfessorGEntity;
 import com.hackathon.ainpc.networking.AiBridgeService;
 import com.hackathon.ainpc.networking.NpcInteractionResponse;
+import com.hackathon.ainpc.networking.NPCStateResponse;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -12,6 +13,9 @@ import net.minecraftforge.event.ServerChatEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 
+/**
+ * Phase 5: Enhanced Chat Handler with Memory & State Sync
+ */
 @Mod.EventBusSubscriber(modid = AiNpcMod.MOD_ID, bus = Mod.EventBusSubscriber.Bus.FORGE)
 public class ChatHandler {
 
@@ -20,7 +24,7 @@ public class ChatHandler {
         String message = event.getRawText();
         String playerName = event.getUsername();
 
-        // Only react if the player mentions the NPC name
+        // Only react if player mentions the NPC
         if (message == null || !message.toLowerCase().contains("professor")) {
             return;
         }
@@ -35,35 +39,42 @@ public class ChatHandler {
             return;
         }
 
+        // Show thinking indicator
         event.getPlayer().sendSystemMessage(
-                Component.literal("§e[Professor G]§r I'm listening...")
+                Component.literal("§7[Professor G is thinking...]§r")
         );
 
-        event.getPlayer().sendSystemMessage(
-                Component.literal("§7[Thinking]§r Professor G is thinking...")
-        );
-
-        // Call the AI bridge
-        AiBridgeService.sendToAI(playerName, "professor_g", message, new AiBridgeService.Callback() {
+        // Send to AI
+        AiBridgeService.sendToAI(playerName, "Professor G", message, new AiBridgeService.Callback() {
             @Override
             public void onSuccess(NpcInteractionResponse response) {
-                // Run back on the server thread
                 level.getServer().execute(() -> {
                     AiNpcMod.LOGGER.info("[ChatHandler] AI Response: {}", response);
 
                     if (response != null && response.action != null) {
-                        // Get the chat response
-                        String chatResponse = response.action.chat_response;
+                        // Get chat response
+                        String chatResponse = response.action.chatResponse;
                         if (chatResponse != null && !chatResponse.isEmpty()) {
                             nearestNPC.sayInChat(chatResponse);
                         }
 
-                        // Execute action if it's not just "say"
-                        String actionType = response.action.action_type;
+                        // Update NPC emotion if changed
+                        if (response.newState != null && response.newState.emotion != null) {
+                            nearestNPC.setEmotion(response.newState.emotion);
+                            AiNpcMod.LOGGER.info("[ChatHandler] Updated emotion to: {}",
+                                    response.newState.emotion);
+                        }
+
+                        // Execute action
+                        String actionType = response.action.actionType;
                         if (actionType != null && !actionType.equals("say") && !actionType.equals("respond_chat")) {
-                            // Build action params from the response
                             String params = response.getActionParams();
                             nearestNPC.executeAIAction(actionType, params);
+                        }
+
+                        // Update NPC internal state
+                        if (response.newState != null) {
+                            nearestNPC.updateFromState(response.newState);
                         }
                     }
                 });
@@ -71,14 +82,47 @@ public class ChatHandler {
 
             @Override
             public void onFailure(String error) {
-                // Handle failure
                 AiNpcMod.LOGGER.error("[ChatHandler] AI call failed: {}", error);
                 level.getServer().execute(() -> {
-                    nearestNPC.sayInChat("*confused* My thoughts seem scattered right now...");
+                    nearestNPC.sayInChat("*confused* My circuits seem scrambled...");
                     event.getPlayer().sendSystemMessage(
                             Component.literal("§c[AI Error]§r " + error)
                     );
                 });
+            }
+        });
+    }
+
+    /**
+     * Periodic state sync - called every 60 seconds
+     * This keeps NPC in sync with Python backend state
+     */
+    public static void syncNPCState(ProfessorGEntity npc) {
+        AiBridgeService.pollState("Professor G", new AiBridgeService.StateCallback() {
+            @Override
+            public void onSuccess(NPCStateResponse state) {
+                if (npc.level() instanceof ServerLevel serverLevel) {
+                    serverLevel.getServer().execute(() -> {
+                        AiNpcMod.LOGGER.debug("[ChatHandler] State sync: emotion={}, objective={}",
+                                state.emotion, state.currentObjective);
+
+                        // Update NPC emotion
+                        if (state.emotion != null) {
+                            npc.setEmotion(state.emotion);
+                        }
+
+                        // Update NPC objective (could be used for display/behavior)
+                        if (state.currentObjective != null) {
+                            npc.setCurrentObjective(state.currentObjective);
+                        }
+                    });
+                }
+            }
+
+            @Override
+            public void onFailure(String error) {
+                AiNpcMod.LOGGER.debug("[ChatHandler] State sync failed: {}", error);
+                // Silent failure - not critical
             }
         });
     }

@@ -1,5 +1,8 @@
 package com.hackathon.ainpc.entity;
 
+
+import com.hackathon.ainpc.networking.StatePayload;
+import net.minecraft.nbt.CompoundTag;
 import com.hackathon.ainpc.AiNpcMod;
 import com.hackathon.ainpc.entity.ai.FollowPlayerGoal;
 import net.minecraft.core.BlockPos;
@@ -26,6 +29,11 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
+import com.hackathon.ainpc.handler.ChatHandler;
+
+import com.hackathon.ainpc.networking.StatePayload;
+import net.minecraft.nbt.CompoundTag;
+
 
 public class ProfessorGEntity extends PathfinderMob {
     public static final String NPC_NAME = "Professor G";
@@ -41,6 +49,13 @@ public class ProfessorGEntity extends PathfinderMob {
     private BlockPos targetPosition = null;
     private ItemEntity targetPickupItem = null;
 
+    private String currentEmotion = "neutral";
+    private String currentObjective = "Awaiting player interaction";
+    private long lastStateSyncTime = 0;
+    private static final long STATE_SYNC_INTERVAL = 60000; // 60 seconds
+
+
+
     public ProfessorGEntity(EntityType<? extends PathfinderMob> type, Level level) {
         super(type, level);
         this.setCustomName(Component.literal(NPC_NAME));
@@ -55,6 +70,8 @@ public class ProfessorGEntity extends PathfinderMob {
                 .add(Attributes.ATTACK_DAMAGE, 5.0D)
                 .add(Attributes.ATTACK_KNOCKBACK, 0.5D);
     }
+
+    
 
     @Override
     protected void registerGoals() {
@@ -197,7 +214,11 @@ public class ProfessorGEntity extends PathfinderMob {
     @Override
     public void addAdditionalSaveData(CompoundTag tag) {
         super.addAdditionalSaveData(tag);
-        
+
+        tag.putString("CurrentEmotion", this.currentEmotion);
+        tag.putString("CurrentObjective", this.currentObjective);
+        tag.putLong("LastStateSyncTime", this.lastStateSyncTime);
+
         CompoundTag inventoryTag = new CompoundTag();
         for (int i = 0; i < inventory.getContainerSize(); i++) {
             ItemStack stack = inventory.getItem(i);
@@ -218,6 +239,17 @@ public class ProfessorGEntity extends PathfinderMob {
     public void readAdditionalSaveData(CompoundTag tag) {
         super.readAdditionalSaveData(tag);
         
+        if (tag.contains("CurrentEmotion")) {
+            this.currentEmotion = tag.getString("CurrentEmotion");
+        }
+        if (tag.contains("CurrentObjective")) {
+            this.currentObjective = tag.getString("CurrentObjective");
+        }
+        if (tag.contains("LastStateSyncTime")) {
+            this.lastStateSyncTime = tag.getLong("LastStateSyncTime");
+        }
+        
+
         if (tag.contains("Inventory")) {
             CompoundTag inventoryTag = tag.getCompound("Inventory");
             for (int i = 0; i < inventory.getContainerSize(); i++) {
@@ -232,7 +264,20 @@ public class ProfessorGEntity extends PathfinderMob {
             currentTask = tag.getString("CurrentTask");
         }
     }
-    
+     /**
+     * Get NPC status including emotion
+     */
+    // @Override
+    // public String getCurrentTask() {
+    //     return String.format("%s (feeling: %s)", 
+    //             super.getCurrentTask(), 
+    //             this.currentEmotion);
+    // }
+    public String getCurrentTask() {
+    return String.format("%s (feeling: %s)", 
+            this.currentTask, 
+            this.currentEmotion);
+}
     /**
      * Drop all inventory items on death
      */
@@ -802,11 +847,107 @@ public class ProfessorGEntity extends PathfinderMob {
         } catch (Exception e) {
             AiNpcMod.LOGGER.error("[Professor G] Failed to spawn particles", e);
         }
+        
     }
+
     
+    /**
+     * Set NPC emotion (updates display and behavior)
+     */
+    public void setEmotion(String emotion) {
+        if (emotion != null && !emotion.equals(this.currentEmotion)) {
+            this.currentEmotion = emotion;
+            AiNpcMod.LOGGER.info("[Professor G] Emotion changed to: {}", emotion);
+            
+            // Show emotion particles
+            spawnEmotionParticles(emotion);
+        }
+    }
+
+    /**
+     * Get current emotion
+     */
+    public String getEmotion() {
+        return this.currentEmotion;
+    }
+
+    /**
+     * Set current objective
+     */
+    public void setCurrentObjective(String objective) {
+        if (objective != null) {
+            this.currentObjective = objective;
+            AiNpcMod.LOGGER.debug("[Professor G] Objective: {}", objective);
+        }
+    }
+
+    /**
+     * Get current objective
+     */
+    public String getCurrentObjective() {
+        return this.currentObjective;
+    }
+
+    /**
+     * Update NPC from AI state response
+     */
+    public void updateFromState(StatePayload state) {
+        if (state == null) return;
+
+        // Update emotion
+        if (state.emotion != null) {
+            setEmotion(state.emotion);
+        }
+
+        // Update objective
+        if (state.currentObjective != null) {
+            setCurrentObjective(state.currentObjective);
+        }
+
+        // Update position if provided
+        if (state.x != null && state.z != null) {
+            // Position is informational - actual movement handled by actions
+            AiNpcMod.LOGGER.debug("[Professor G] Backend position: ({}, {})",
+                    state.x, state.z);
+        }
+    }
+
+    /**
+     * Spawn particles based on emotion
+     */
+    private void spawnEmotionParticles(String emotion) {
+        if (this.level().isClientSide || !(this.level() instanceof ServerLevel serverLevel)) {
+            return;
+        }
+
+        String particleType = switch (emotion.toLowerCase()) {
+            case "happy" -> "heart";
+            case "angry" -> "angry_villager";
+            case "excited" -> "happy_villager";
+            case "sad" -> "rain";
+            case "confused" -> "smoke";
+            case "thinking" -> "enchant";
+            case "helpful", "generous" -> "happy_villager";
+            default -> null;
+        };
+
+        if (particleType != null) {
+            spawnParticles(particleType);
+        }
+    }
+
     @Override
     public void tick() {
         super.tick();
+
+        if (!this.level().isClientSide) {
+            // Periodic state sync with Python backend
+            long currentTime = System.currentTimeMillis();
+            if (currentTime - lastStateSyncTime > STATE_SYNC_INTERVAL) {
+                lastStateSyncTime = currentTime;
+                ChatHandler.syncNPCState(this);
+            }
+
         
         if (!this.level().isClientSide) {
             if ("moving_to_coords".equals(currentTask) && targetPosition != null) {
@@ -878,11 +1019,20 @@ public class ProfessorGEntity extends PathfinderMob {
                         this.getNavigation().moveTo(targetPickupItem, 1.2D);
                     }
                 }
+                
             }
-        }
+            
+            
+        }}
+        
+        
     }
     
-    public String getCurrentTask() {
-        return currentTask;
-    }
+    
+    // public String getCurrentTask() {
+    //     return currentTask;
+    // }
+
+    
+    
 }

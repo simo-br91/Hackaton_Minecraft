@@ -1,53 +1,32 @@
 package com.hackathon.ainpc.networking;
 
+import com.google.gson.annotations.SerializedName;
+
 /**
- * Response from Python AI server
- * Updated to match the actual Python response structure
+ * Complete response from Python AI server
+ * Phase 5: Includes action + new state
  */
 public class NpcInteractionResponse {
-    // Nested action object
-    public ActionData action;
-    
-    // Nested state object
-    public StateData new_state;
-    
-    /**
-     * Inner class for action data
-     */
-    public static class ActionData {
-        public String action_type;
-        public String chat_response;
-        public String target_name;
-        public Integer x;
-        public Integer z;
-    }
-    
-    /**
-     * Inner class for state data
-     */
-    public static class StateData {
-        public String emotion;
-        public String current_objective;
-        public String recent_memory_summary;
-        public Integer x;
-        public Integer z;
-    }
-    
-    // Helper methods to maintain compatibility with existing code
+    @SerializedName("action")
+    public ActionPayload action;
+
+    @SerializedName("new_state")
+    public StatePayload newState;
+
+    // Helper methods for backward compatibility
     public String getReply() {
-        return action != null ? action.chat_response : null;
+        return action != null ? action.chatResponse : null;
     }
-    
+
     public String getAction() {
-        return action != null ? action.action_type : null;
+        return action != null ? action.actionType : null;
     }
-    
+
     public String getActionParams() {
         if (action == null) return null;
-        
-        // Build params string based on action type
-        if (action.target_name != null) {
-            return action.target_name;
+
+        if (action.targetName != null) {
+            return action.targetName;
         } else if (action.x != null && action.z != null) {
             return action.x + "," + action.z;
         }
@@ -56,10 +35,7 @@ public class NpcInteractionResponse {
 
     @Override
     public String toString() {
-        String reply = action != null ? action.chat_response : "null";
-        String actionType = action != null ? action.action_type : "null";
-        String params = getActionParams();
-        return String.format("Response{reply='%s', action='%s', params='%s'}", 
-                             reply, actionType, params);
+        return String.format("Response{action=%s, state=%s}",
+                action, newState);
     }
 }
