@@ -38,9 +38,10 @@ public class ProfessorGEntity extends PathfinderMob {
     public static AttributeSupplier.Builder createAttributes() {
         return PathfinderMob.createMobAttributes()
                 .add(Attributes.MAX_HEALTH, 20.0D)
-                .add(Attributes.MOVEMENT_SPEED, 0.3D)
+                .add(Attributes.MOVEMENT_SPEED, 0.25D)  // Slightly slower for better control
                 .add(Attributes.FOLLOW_RANGE, 48.0D)
-                .add(Attributes.ATTACK_DAMAGE, 5.0D);
+                .add(Attributes.ATTACK_DAMAGE, 5.0D)
+                .add(Attributes.ATTACK_KNOCKBACK, 0.5D);  // Add knockback for attacks
     }
 
     @Override
@@ -127,6 +128,7 @@ public class ProfessorGEntity extends PathfinderMob {
         }
         if (attackGoal != null) {
             this.goalSelector.removeGoal(attackGoal);
+            this.targetSelector.getAvailableGoals().clear();  // Clear target selector too
             attackGoal = null;
         }
         this.setTarget(null);
@@ -147,7 +149,7 @@ public class ProfessorGEntity extends PathfinderMob {
     }
     
     /**
-     * Handle move_to action - ENHANCED VERSION
+     * Handle move_to action - FIXED VERSION with proper Y coordinate handling
      */
     private void handleMoveToAction(String params) {
         if (params == null || params.isEmpty()) {
@@ -167,7 +169,14 @@ public class ProfessorGEntity extends PathfinderMob {
                     double distance = this.distanceTo(targetPlayer);
                     BlockPos targetPos = targetPlayer.blockPosition();
                     
-                    boolean success = this.getNavigation().moveTo(targetPlayer, 1.0D);
+                    // FIX: Use the actual target position, not just the entity
+                    boolean success = this.getNavigation().moveTo(
+                        targetPos.getX() + 0.5, 
+                        targetPos.getY(), 
+                        targetPos.getZ() + 0.5, 
+                        1.0D
+                    );
+                    
                     this.currentTask = "moving_to_player";
                     
                     if (success) {
@@ -178,6 +187,7 @@ public class ProfessorGEntity extends PathfinderMob {
                             playerName, targetPos);
                     } else {
                         sayInChat("I can't find a path to " + playerName + "!");
+                        AiNpcMod.LOGGER.warn("[Professor G] Pathfinding failed - no valid path");
                     }
                 } else {
                     sayInChat("I can't find " + playerName + "!");
@@ -191,25 +201,34 @@ public class ProfessorGEntity extends PathfinderMob {
                     double z = coords.length == 3 ? 
                         Double.parseDouble(coords[2].trim()) : 
                         Double.parseDouble(coords[1].trim());
+                    
+                    // FIX: Find valid Y coordinate at target location
                     double y = coords.length == 3 ? 
                         Double.parseDouble(coords[1].trim()) : 
-                        this.getY();
+                        findGroundLevel(x, z);
                     
                     BlockPos targetPos = new BlockPos((int)x, (int)y, (int)z);
                     double distance = this.position().distanceTo(new Vec3(x, y, z));
                     
-                    // Use pathfinding
-                    boolean success = this.getNavigation().moveTo(x, y, z, 1.0D);
+                    // FIX: Ensure we're pathfinding to a valid position
+                    // Center of the block for better pathfinding
+                    boolean success = this.getNavigation().moveTo(
+                        x + 0.5, 
+                        y, 
+                        z + 0.5, 
+                        1.0D
+                    );
                     
                     if (success) {
                         this.currentTask = "moving_to_coords";
                         sayInChat(String.format("Moving to (%d, %d, %d)! That's %.1f blocks away.", 
                             (int)x, (int)y, (int)z, distance));
                         
-                        AiNpcMod.LOGGER.info("[Professor G] Pathfinding to {}", targetPos);
+                        AiNpcMod.LOGGER.info("[Professor G] Pathfinding to {} - Path valid: {}", 
+                            targetPos, this.getNavigation().getPath() != null);
                     } else {
                         sayInChat("*stumbles* I can't find a path there...");
-                        AiNpcMod.LOGGER.warn("[Professor G] Pathfinding failed to {}", targetPos);
+                        AiNpcMod.LOGGER.warn("[Professor G] Pathfinding failed to {} - Target may be unreachable", targetPos);
                     }
                 }
             }
@@ -217,6 +236,33 @@ public class ProfessorGEntity extends PathfinderMob {
             AiNpcMod.LOGGER.error("[Professor G] Error in move_to action", e);
             sayInChat("*stumbles* I can't quite navigate there...");
         }
+    }
+    
+    /**
+     * Find ground level at given X, Z coordinates
+     */
+    private double findGroundLevel(double x, double z) {
+        BlockPos checkPos = new BlockPos((int)x, (int)this.getY(), (int)z);
+        
+        // Search down for solid ground
+        for (int dy = 0; dy >= -10; dy--) {
+            BlockPos testPos = checkPos.offset(0, dy, 0);
+            if (!this.level().getBlockState(testPos).isAir() && 
+                this.level().getBlockState(testPos.above()).isAir()) {
+                return testPos.getY() + 1;  // Stand on top of the block
+            }
+        }
+        
+        // Search up for ground
+        for (int dy = 1; dy <= 10; dy++) {
+            BlockPos testPos = checkPos.offset(0, dy, 0);
+            if (!this.level().getBlockState(testPos).isAir() && 
+                this.level().getBlockState(testPos.above()).isAir()) {
+                return testPos.getY() + 1;
+            }
+        }
+        
+        return this.getY();  // Fallback to current Y
     }
     
     /**
@@ -255,7 +301,7 @@ public class ProfessorGEntity extends PathfinderMob {
     }
     
     /**
-     * Handle attack action - FIXED VERSION
+     * Handle attack action - COMPLETELY FIXED VERSION
      */
     private void handleAttackAction(String params) {
         if (params == null || params.isEmpty()) {
@@ -263,7 +309,7 @@ public class ProfessorGEntity extends PathfinderMob {
         }
         
         String targetType = params.toLowerCase().trim();
-        LivingEntity target = null;
+        final LivingEntity target;  // FIXED: Made final for lambda
         
         AiNpcMod.LOGGER.info("[Professor G] Searching for attack target: {}", targetType);
         
@@ -279,16 +325,17 @@ public class ProfessorGEntity extends PathfinderMob {
         } else if (targetType.contains("zombie") || targetType.contains("skeleton") || 
                    targetType.contains("creeper") || targetType.contains("spider")) {
             // Find specific monster type
+            final String finalTargetType = targetType;  // FIXED: Made final for lambda
             target = this.level().getNearestEntity(
                 Monster.class,
                 net.minecraft.world.entity.ai.targeting.TargetingConditions.DEFAULT
-                    .selector(e -> e.getType().toString().toLowerCase().contains(targetType)),
+                    .selector(e -> e.getType().toString().toLowerCase().contains(finalTargetType)),
                 this,
                 this.getX(), this.getY(), this.getZ(),
                 this.getBoundingBox().inflate(20.0D)
             );
-        } else if (targetType.equals("nearest") || targetType.equals("nearest_mob")) {
-            // Find any nearby living entity (excluding players)
+        } else {
+            // Find any nearby living entity (excluding players) - for "nearest" or "nearest_mob"
             target = this.level().getNearestEntity(
                 LivingEntity.class,
                 net.minecraft.world.entity.ai.targeting.TargetingConditions.DEFAULT
@@ -300,21 +347,47 @@ public class ProfessorGEntity extends PathfinderMob {
         }
         
         if (target != null) {
+            // FIX: Set target FIRST before adding attack goal
             this.setTarget(target);
             this.currentTask = "attacking";
             
-            // Add melee attack goal with high priority
-            attackGoal = new MeleeAttackGoal(this, 1.2D, false);
+            // FIX: Add BOTH attack goal and target selector goal
+            // MeleeAttackGoal needs the target selector to work properly
+            attackGoal = new MeleeAttackGoal(this, 1.2D, true);  // true = follow even when not seeing
             this.goalSelector.addGoal(2, attackGoal);
             
+            // CRITICAL FIX: Add target selector goal to maintain target
+            NearestAttackableTargetGoal<LivingEntity> targetGoal = 
+                new NearestAttackableTargetGoal<>(this, LivingEntity.class, 10, true, false, 
+                    e -> e == target);  // Only target the specific entity
+            this.targetSelector.addGoal(1, targetGoal);
+            
             sayInChat("*charges* Engaging " + target.getType().getDescription().getString() + "!");
-            AiNpcMod.LOGGER.info("[Professor G] Attacking {} at distance {}", 
+            AiNpcMod.LOGGER.info("[Professor G] Attacking {} at distance {} - Target set: {}", 
                 target.getType().getDescription().getString(), 
-                this.distanceTo(target));
+                this.distanceTo(target),
+                this.getTarget() != null);
         } else {
             sayInChat("*looks around* I don't see any " + targetType + " nearby...");
             AiNpcMod.LOGGER.warn("[Professor G] No target found for: {}", targetType);
         }
+    }
+    
+    /**
+     * OVERRIDE: Make Professor G actually able to attack
+     */
+    @Override
+    public boolean doHurtTarget(net.minecraft.world.entity.Entity target) {
+        // Call parent attack method
+        boolean success = super.doHurtTarget(target);
+        
+        if (success) {
+            // Play swing animation
+            this.swing(net.minecraft.world.InteractionHand.MAIN_HAND);
+            AiNpcMod.LOGGER.info("[Professor G] Successfully attacked target!");
+        }
+        
+        return success;
     }
     
     /**
@@ -338,9 +411,9 @@ public class ProfessorGEntity extends PathfinderMob {
             
             // Move to block
             boolean success = this.getNavigation().moveTo(
-                nearestBlock.getX(), 
+                nearestBlock.getX() + 0.5, 
                 nearestBlock.getY(), 
-                nearestBlock.getZ(), 
+                nearestBlock.getZ() + 0.5, 
                 1.0D
             );
             
