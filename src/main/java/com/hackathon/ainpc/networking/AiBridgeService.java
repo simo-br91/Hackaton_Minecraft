@@ -3,28 +3,29 @@ package com.hackathon.ainpc.networking;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.hackathon.ainpc.AiNpcMod;
-import okhttp3.*;
 
 import java.io.IOException;
-import java.util.concurrent.TimeUnit;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * Service for communicating with Python AI backend
- * Handles HTTP requests asynchronously with proper error handling
+ * Uses Java 11+ built-in HttpClient (NO external dependencies!)
  */
 public class AiBridgeService {
     // Python Flask server endpoint
     private static final String AI_API_URL = "http://localhost:5000/api/npc_interact";
-    private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
 
     // HTTP client with timeouts
-    private static final OkHttpClient client = new OkHttpClient.Builder()
-            .callTimeout(10, TimeUnit.SECONDS)
-            .connectTimeout(5, TimeUnit.SECONDS)
-            .readTimeout(10, TimeUnit.SECONDS)
+    private static final HttpClient client = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(5))
             .build();
 
-    // JSON serializer
+    // JSON serializer (Gson is provided by Minecraft, so this is safe)
     private static final Gson GSON = new GsonBuilder()
             .setPrettyPrinting()
             .create();
@@ -47,54 +48,52 @@ public class AiBridgeService {
         AiNpcMod.LOGGER.debug("[AI Bridge] JSON payload: {}", jsonPayload);
 
         // Build HTTP request
-        Request request = new Request.Builder()
-                .url(AI_API_URL)
-                .post(RequestBody.create(jsonPayload, JSON))
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(AI_API_URL))
+                .timeout(Duration.ofSeconds(10))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(jsonPayload))
                 .build();
 
-        // Execute async
-        client.newCall(request).enqueue(new okhttp3.Callback() {
-            @Override
-            public void onFailure(Call call, IOException e) {
-                AiNpcMod.LOGGER.error("[AI Bridge] Failed to reach Python server: {}", e.getMessage());
-                callback.onFailure("AI system is offline or unreachable. Check if Python server is running.");
+        // Execute async (this runs in a separate thread)
+        CompletableFuture<HttpResponse<String>> futureResponse = 
+            client.sendAsync(request, HttpResponse.BodyHandlers.ofString());
+
+        // Handle response when it arrives
+        futureResponse.whenComplete((response, error) -> {
+            if (error != null) {
+                // Connection failed
+                AiNpcMod.LOGGER.error("[AI Bridge] Failed to reach Python server: {}", error.getMessage());
+                callback.onFailure("AI system is offline. Is Python server running?");
+                return;
             }
 
-            @Override
-            public void onResponse(Call call, Response response) throws IOException {
-                try (ResponseBody responseBody = response.body()) {
-                    if (responseBody == null) {
-                        AiNpcMod.LOGGER.error("[AI Bridge] Received empty response from server");
+            try {
+                String responseBody = response.body();
+                AiNpcMod.LOGGER.debug("[AI Bridge] Received JSON: {}", responseBody);
+
+                if (response.statusCode() == 200) {
+                    // Parse JSON response
+                    NpcInteractionResponse npcResponse = GSON.fromJson(responseBody, NpcInteractionResponse.class);
+                    
+                    if (npcResponse == null) {
+                        AiNpcMod.LOGGER.error("[AI Bridge] Response was null");
                         callback.onFailure("AI returned empty response.");
                         return;
                     }
-
-                    String responseJson = responseBody.string();
-                    AiNpcMod.LOGGER.debug("[AI Bridge] Received JSON: {}", responseJson);
-
-                    if (response.isSuccessful()) {
-                        try {
-                            NpcInteractionResponse npcResponse = GSON.fromJson(responseJson, NpcInteractionResponse.class);
-                            
-                            // Validate response
-                            if (npcResponse == null || npcResponse.action == null) {
-                                AiNpcMod.LOGGER.error("[AI Bridge] Invalid response structure");
-                                callback.onFailure("AI response was malformed.");
-                                return;
-                            }
-                            
-                            AiNpcMod.LOGGER.info("[AI Bridge] Success: {}", npcResponse);
-                            callback.onSuccess(npcResponse);
-                            
-                        } catch (Exception e) {
-                            AiNpcMod.LOGGER.error("[AI Bridge] JSON parsing failed: {}", e.getMessage());
-                            callback.onFailure("Could not parse AI response: " + e.getMessage());
-                        }
-                    } else {
-                        AiNpcMod.LOGGER.error("[AI Bridge] Server returned error code: {}", response.code());
-                        callback.onFailure("Python server error: " + response.code());
-                    }
+                    
+                    AiNpcMod.LOGGER.info("[AI Bridge] Success: {}", npcResponse);
+                    callback.onSuccess(npcResponse);
+                    
+                } else {
+                    // Server returned error
+                    AiNpcMod.LOGGER.error("[AI Bridge] Server error code: {}", response.statusCode());
+                    callback.onFailure("Python server error: " + response.statusCode());
                 }
+                
+            } catch (Exception e) {
+                AiNpcMod.LOGGER.error("[AI Bridge] JSON parsing failed: {}", e.getMessage());
+                callback.onFailure("Could not parse AI response.");
             }
         });
     }
