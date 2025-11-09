@@ -12,14 +12,15 @@ import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * Enhanced AI Bridge Service for Phase 5+
- * Adds event recording and relationship querying
+ * Enhanced AI Bridge Service for Phase 5+ (Multiple NPCs)
+ * Adds event recording, relationship querying, and NPC deletion
  */
 public class AiBridgeService {
     private static final String AI_API_URL = "http://127.0.0.1:5000/api/npc_interact_enhanced";
     private static final String EVENT_API_URL = "http://127.0.0.1:5000/api/npc_event";
     private static final String RELATIONSHIP_API_URL = "http://127.0.0.1:5000/api/npc_relationship";
     private static final String STATE_API_URL = "http://127.0.0.1:5000/api/npc_state";
+    private static final String DELETE_API_URL = "http://127.0.0.1:5000/api/npc_delete";
 
     private static final HttpClient client = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(5))
@@ -30,14 +31,14 @@ public class AiBridgeService {
             .create();
 
     /**
-     * Send interaction to AI backend (ENHANCED version)
+     * Send interaction to AI backend (ENHANCED version with NPC ID)
      */
     public static void sendToAI(String player, String npcId, String message, Callback callback) {
         NpcInteractionRequest requestData = new NpcInteractionRequest(player, npcId, message);
         String jsonPayload = GSON.toJson(requestData);
 
-        AiNpcMod.LOGGER.info("[AI Bridge Enhanced] Sending: player={}, message={}",
-                player, message);
+        AiNpcMod.LOGGER.info("[AI Bridge Enhanced] Sending: npc={}, player={}, message={}",
+                npcId, player, message);
 
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(AI_API_URL))
@@ -70,7 +71,8 @@ public class AiBridgeService {
                         return;
                     }
 
-                    AiNpcMod.LOGGER.info("[AI Bridge Enhanced] Success: action={}, emotion={}",
+                    AiNpcMod.LOGGER.info("[AI Bridge Enhanced] Success for {}: action={}, emotion={}",
+                            npcId,
                             npcResponse.action.actionType,
                             npcResponse.newState.emotion);
                     
@@ -91,8 +93,8 @@ public class AiBridgeService {
     public static void sendEvent(JsonObject eventPayload, EventCallback callback) {
         String jsonPayload = GSON.toJson(eventPayload);
 
-        AiNpcMod.LOGGER.debug("[AI Bridge] Sending event: {}", 
-                eventPayload.get("event_type").getAsString());
+        AiNpcMod.LOGGER.debug("[AI Bridge] Sending event for NPC: {}", 
+                eventPayload.get("npc_id").getAsString());
 
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(EVENT_API_URL))
@@ -172,7 +174,51 @@ public class AiBridgeService {
     }
 
     /**
-     * Poll NPC state (existing method - kept for compatibility)
+     * Delete NPC memory (called when NPC dies)
+     */
+    public static void deleteNPCMemory(String npcId, DeleteCallback callback) {
+        JsonObject payload = new JsonObject();
+        payload.addProperty("npc_id", npcId);
+        String jsonPayload = GSON.toJson(payload);
+
+        AiNpcMod.LOGGER.info("[AI Bridge] Deleting memory for NPC: {}", npcId);
+
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(DELETE_API_URL))
+                .timeout(Duration.ofSeconds(5))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(jsonPayload))
+                .build();
+
+        CompletableFuture<HttpResponse<String>> futureResponse =
+                client.sendAsync(request, HttpResponse.BodyHandlers.ofString());
+
+        futureResponse.whenComplete((response, error) -> {
+            if (error != null) {
+                AiNpcMod.LOGGER.error("[AI Bridge] Delete failed: {}", error.getMessage());
+                callback.onFailure("Could not delete NPC memory");
+                return;
+            }
+
+            try {
+                if (response.statusCode() == 200) {
+                    AiNpcMod.LOGGER.info("[AI Bridge] Successfully deleted memory for {}", npcId);
+                    callback.onSuccess();
+                } else if (response.statusCode() == 404) {
+                    AiNpcMod.LOGGER.warn("[AI Bridge] Memory not found for {}", npcId);
+                    callback.onSuccess(); // Not an error - memory didn't exist
+                } else {
+                    callback.onFailure("Delete error: " + response.statusCode());
+                }
+            } catch (Exception e) {
+                AiNpcMod.LOGGER.error("[AI Bridge] Delete parse failed: {}", e.getMessage());
+                callback.onFailure("Could not parse delete response");
+            }
+        });
+    }
+
+    /**
+     * Poll NPC state
      */
     public static void pollState(String npcId, StateCallback callback) {
         String url = STATE_API_URL + "?npc_id=" + npcId.replace(" ", "%20");
@@ -227,6 +273,11 @@ public class AiBridgeService {
 
     public interface StateCallback {
         void onSuccess(NPCStateResponse state);
+        void onFailure(String error);
+    }
+
+    public interface DeleteCallback {
+        void onSuccess();
         void onFailure(String error);
     }
 }

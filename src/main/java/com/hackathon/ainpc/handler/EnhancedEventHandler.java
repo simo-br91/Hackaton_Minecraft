@@ -16,7 +16,7 @@ import net.minecraftforge.fml.common.Mod;
 
 /**
  * Enhanced Event Handler for Phase 5+
- * Records combat and social events to build contextual memory
+ * Records combat and social events, handles NPC death
  */
 @Mod.EventBusSubscriber(modid = AiNpcMod.MOD_ID, bus = Mod.EventBusSubscriber.Bus.FORGE)
 public class EnhancedEventHandler {
@@ -26,17 +26,14 @@ public class EnhancedEventHandler {
      */
     @SubscribeEvent
     public static void onNPCAttacked(LivingAttackEvent event) {
-        // Only process if victim is our NPC
         if (!(event.getEntity() instanceof ProfessorGEntity npc)) {
             return;
         }
 
-        // CRITICAL: Only process on server side
         if (npc.level().isClientSide) {
             return;
         }
 
-        // Skip if cancelled or no damage
         if (event.isCanceled() || event.getAmount() <= 0) {
             return;
         }
@@ -53,7 +50,6 @@ public class EnhancedEventHandler {
         float damage = event.getAmount();
         String weapon = "unknown";
         
-        // Get weapon name if player
         if (attacker instanceof Player player) {
             if (!player.getMainHandItem().isEmpty()) {
                 weapon = player.getMainHandItem().getHoverName().getString();
@@ -63,11 +59,11 @@ public class EnhancedEventHandler {
         }
 
         AiNpcMod.LOGGER.info("[Enhanced] {} attacked by {} ({}) for {} damage with {}",
-                npc.getName().getString(), attackerName, attackerType, damage, weapon);
+                npc.getNpcName(), attackerName, attackerType, damage, weapon);
 
-        // Send combat event to Python
+        // Send combat event to Python (use unique NPC ID)
         recordCombatEvent(
-                "Professor G",
+                npc.getNpcId(),
                 "attacked_by",
                 attackerName,
                 attackerType,
@@ -75,28 +71,32 @@ public class EnhancedEventHandler {
                 weapon
         );
 
-        // Make NPC react immediately (server is already available here)
+        // Make NPC react immediately
         if (npc.level().getServer() != null) {
             npc.level().getServer().execute(() -> {
-                // Check relationship and react
                 checkRelationshipAndReact(npc, attackerName, damage);
             });
         }
     }
 
     /**
-     * Track when entities die near the NPC
+     * Track when entities die near the NPC AND when NPCs themselves die
      */
     @SubscribeEvent
     public static void onEntityDeath(LivingDeathEvent event) {
-        // Only process on server side
         if (event.getEntity().level().isClientSide) {
             return;
         }
 
         LivingEntity deadEntity = event.getEntity();
         
-        // Find nearby Professor G NPCs
+        // Check if the dead entity is one of our NPCs
+        if (deadEntity instanceof ProfessorGEntity deadNPC) {
+            handleNPCDeath(deadNPC);
+            return;
+        }
+        
+        // Find nearby Professor G NPCs to witness the death
         var nearbyNPCs = deadEntity.level().getEntitiesOfClass(
                 ProfessorGEntity.class,
                 deadEntity.getBoundingBox().inflate(20.0)
@@ -107,11 +107,11 @@ public class EnhancedEventHandler {
             String deadEntityType = deadEntity instanceof Player ? "player" : "mob";
 
             AiNpcMod.LOGGER.info("[Enhanced] {} witnessed death of {}",
-                    npc.getName().getString(), deadEntityName);
+                    npc.getNpcName(), deadEntityName);
 
-            // Record witnessed death
+            // Record witnessed death (use unique NPC ID)
             recordCombatEvent(
-                    "Professor G",
+                    npc.getNpcId(),
                     "witnessed_death",
                     deadEntityName,
                     deadEntityType,
@@ -126,6 +126,32 @@ public class EnhancedEventHandler {
     }
 
     /**
+     * Handle NPC death - clear its memory on backend
+     */
+    private static void handleNPCDeath(ProfessorGEntity npc) {
+        String npcId = npc.getNpcId();
+        String npcName = npc.getNpcName();
+        
+        AiNpcMod.LOGGER.info("[Enhanced] {} has died - clearing memory", npcName);
+        
+        // Send delete request to Python backend
+        JsonObject payload = new JsonObject();
+        payload.addProperty("npc_id", npcId);
+        
+        AiBridgeService.deleteNPCMemory(npcId, new AiBridgeService.DeleteCallback() {
+            @Override
+            public void onSuccess() {
+                AiNpcMod.LOGGER.info("[Enhanced] Successfully cleared memory for {}", npcName);
+            }
+
+            @Override
+            public void onFailure(String error) {
+                AiNpcMod.LOGGER.warn("[Enhanced] Failed to clear memory for {}: {}", npcName, error);
+            }
+        });
+    }
+
+    /**
      * Track when players give items to NPC
      */
     @SubscribeEvent
@@ -134,23 +160,21 @@ public class EnhancedEventHandler {
             return;
         }
 
-        // Only process on server side
         if (event.getEntity().level().isClientSide) {
             return;
         }
 
         Player player = event.getEntity();
         
-        // Check if player is holding an item
         if (!player.getMainHandItem().isEmpty()) {
             String itemName = player.getMainHandItem().getHoverName().getString();
             
             AiNpcMod.LOGGER.info("[Enhanced] {} offered item '{}' to {}",
-                    player.getName().getString(), itemName, npc.getName().getString());
+                    player.getName().getString(), itemName, npc.getNpcName());
 
-            // This is a potential gift - record social event
+            // Record social event (use unique NPC ID)
             recordSocialEvent(
-                    "Professor G",
+                    npc.getNpcId(),
                     "gift_received",
                     player.getName().getString(),
                     itemName,
@@ -188,13 +212,11 @@ public class EnhancedEventHandler {
 
         payload.add("data", data);
 
-        // Send to Python
         AiBridgeService.sendEvent(payload, new AiBridgeService.EventCallback() {
             @Override
             public void onSuccess(JsonObject response) {
-                AiNpcMod.LOGGER.info("[Enhanced] Combat event recorded successfully");
+                AiNpcMod.LOGGER.info("[Enhanced] Combat event recorded successfully for {}", npcId);
                 
-                // Check if we should change behavior
                 if (response.has("relationship")) {
                     JsonObject rel = response.getAsJsonObject("relationship");
                     boolean shouldAttack = rel.get("should_attack").getAsBoolean();
@@ -242,7 +264,7 @@ public class EnhancedEventHandler {
         AiBridgeService.sendEvent(payload, new AiBridgeService.EventCallback() {
             @Override
             public void onSuccess(JsonObject response) {
-                AiNpcMod.LOGGER.info("[Enhanced] Social event recorded successfully");
+                AiNpcMod.LOGGER.info("[Enhanced] Social event recorded successfully for {}", npcId);
             }
 
             @Override
@@ -256,13 +278,12 @@ public class EnhancedEventHandler {
      * Check relationship and make NPC react to attacks
      */
     private static void checkRelationshipAndReact(ProfessorGEntity npc, String attackerName, float damage) {
-        // Safety check
         if (npc == null || npc.level().isClientSide || npc.level().getServer() == null) {
             return;
         }
 
-        // Query relationship status from Python
-        AiBridgeService.getRelationship("Professor G", attackerName, 
+        // Query relationship status from Python (use unique NPC ID)
+        AiBridgeService.getRelationship(npc.getNpcId(), attackerName, 
                 new AiBridgeService.RelationshipCallback() {
             @Override
             public void onSuccess(JsonObject relationship) {
@@ -273,7 +294,7 @@ public class EnhancedEventHandler {
                         .get("should_avoid").getAsBoolean();
 
                 AiNpcMod.LOGGER.info("[Enhanced] {} relationship with {}: {} (attack={}, avoid={})",
-                        npc.getName().getString(), attackerName, status, shouldAttack, shouldAvoid);
+                        npc.getNpcName(), attackerName, status, shouldAttack, shouldAvoid);
 
                 // React based on relationship
                 npc.level().getServer().execute(() -> {
@@ -281,7 +302,6 @@ public class EnhancedEventHandler {
                         npc.sayInChat("*enraged* " + attackerName + ", you've gone too far!");
                         npc.setEmotion("angry");
                         
-                        // Find attacker and set as target
                         Player attacker = npc.level().getServer()
                                 .getPlayerList()
                                 .getPlayerByName(attackerName);
@@ -293,10 +313,8 @@ public class EnhancedEventHandler {
                     } else if (shouldAvoid) {
                         npc.sayInChat("*frightened* Stay away from me, " + attackerName + "!");
                         npc.setEmotion("afraid");
-                        // TODO: Implement fleeing behavior
                         
                     } else if (damage > 3.0f) {
-                        // First time being attacked
                         npc.sayInChat("Ow! " + attackerName + ", why would you do that?!");
                         npc.setEmotion("sad");
                     }

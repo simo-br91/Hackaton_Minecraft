@@ -1,12 +1,12 @@
 package com.hackathon.ainpc.entity;
 
-
 import com.hackathon.ainpc.networking.StatePayload;
+import com.hackathon.ainpc.networking.AiBridgeService;
+import com.hackathon.ainpc.networking.NpcInteractionResponse;
 import net.minecraft.nbt.CompoundTag;
 import com.hackathon.ainpc.AiNpcMod;
 import com.hackathon.ainpc.entity.ai.FollowPlayerGoal;
 import net.minecraft.core.BlockPos;
-import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.SimpleContainer;
@@ -22,21 +22,32 @@ import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.monster.Monster;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.Items;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.level.block.Block;
-import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.resources.ResourceLocation;
 import com.hackathon.ainpc.handler.ChatHandler;
 
-import com.hackathon.ainpc.networking.StatePayload;
-import net.minecraft.nbt.CompoundTag;
-
+import java.util.UUID;
+import java.util.Random;
 
 public class ProfessorGEntity extends PathfinderMob {
-    public static final String NPC_NAME = "Professor G";
+    // List of possible NPC names
+    private static final String[] NPC_NAMES = {
+        "Professor Redstone",
+        "Professor Diamond",
+        "Professor Emerald",
+        "Professor Obsidian",
+        "Professor Quartz",
+        "Professor Prismarine",
+        "Professor Netherite",
+        "Professor Amethyst"
+    };
+    
+    private static final Random RANDOM = new Random();
+    
+    // Unique NPC identifier (name + UUID)
+    private String npcId;
+    private String npcName;
     
     // Inventory system - 27 slots like a chest
     private final SimpleContainer inventory = new SimpleContainer(27);
@@ -50,16 +61,29 @@ public class ProfessorGEntity extends PathfinderMob {
     private ItemEntity targetPickupItem = null;
 
     private String currentEmotion = "neutral";
-    private String currentObjective = "Awaiting player interaction";
+    private String currentObjective = "Exploring the world";
     private long lastStateSyncTime = 0;
     private static final long STATE_SYNC_INTERVAL = 60000; // 60 seconds
 
-
+    // Autonomous behavior
+    private long lastAutonomousAction = 0;
+    private static final long AUTONOMOUS_ACTION_INTERVAL = 15000; // 15 seconds
+    private Player lastDetectedPlayer = null;
+    private long lastPlayerDetection = 0;
+    private static final long PLAYER_DETECTION_COOLDOWN = 30000; // 30 seconds between approaches
+    private boolean hasInitiatedConversation = false;
 
     public ProfessorGEntity(EntityType<? extends PathfinderMob> type, Level level) {
         super(type, level);
-        this.setCustomName(Component.literal(NPC_NAME));
+        
+        // Generate unique name
+        this.npcName = NPC_NAMES[RANDOM.nextInt(NPC_NAMES.length)];
+        this.npcId = this.npcName + "_" + UUID.randomUUID().toString().substring(0, 8);
+        
+        this.setCustomName(Component.literal(this.npcName));
         this.setCustomNameVisible(true);
+        
+        AiNpcMod.LOGGER.info("[NPC] Spawned new NPC: {} (ID: {})", this.npcName, this.npcId);
     }
 
     public static AttributeSupplier.Builder createAttributes() {
@@ -71,8 +95,6 @@ public class ProfessorGEntity extends PathfinderMob {
                 .add(Attributes.ATTACK_KNOCKBACK, 0.5D);
     }
 
-    
-
     @Override
     protected void registerGoals() {
         this.goalSelector.addGoal(0, new FloatGoal(this));
@@ -81,30 +103,151 @@ public class ProfessorGEntity extends PathfinderMob {
         this.goalSelector.addGoal(7, new RandomLookAroundGoal(this));
     }
     
-    // ==================== INVENTORY METHODS ====================
+    /**
+     * Get the unique NPC ID (used for memory storage)
+     */
+    public String getNpcId() {
+        return this.npcId;
+    }
     
     /**
-     * Get the NPC's inventory
+     * Get the NPC's display name
      */
+    public String getNpcName() {
+        return this.npcName;
+    }
+    
+    // ==================== AUTONOMOUS BEHAVIOR ====================
+    
+    /**
+     * Detect nearby players and potentially initiate conversation
+     */
+    private void performAutonomousBehavior() {
+        long currentTime = System.currentTimeMillis();
+        
+        // Only act every 15 seconds
+        if (currentTime - lastAutonomousAction < AUTONOMOUS_ACTION_INTERVAL) {
+            return;
+        }
+        
+        lastAutonomousAction = currentTime;
+        
+        // Find nearest player within 10 blocks
+        Player nearestPlayer = this.level().getNearestPlayer(this, 10.0D);
+        
+        if (nearestPlayer != null && !nearestPlayer.isSpectator()) {
+            double distance = this.distanceTo(nearestPlayer);
+            
+            // If player is close (3-8 blocks) and we haven't talked recently
+            if (distance > 3.0D && distance < 8.0D) {
+                if (lastDetectedPlayer != nearestPlayer || 
+                    currentTime - lastPlayerDetection > PLAYER_DETECTION_COOLDOWN) {
+                    
+                    lastDetectedPlayer = nearestPlayer;
+                    lastPlayerDetection = currentTime;
+                    hasInitiatedConversation = false;
+                    
+                    // Approach and greet the player
+                    initiateConversationWith(nearestPlayer);
+                }
+            }
+            
+            // Random autonomous comments (20% chance)
+            if (RANDOM.nextInt(100) < 20) {
+                makeAutonomousComment(nearestPlayer);
+            }
+        }
+    }
+    
+    /**
+     * NPC initiates conversation with a player
+     */
+    private void initiateConversationWith(Player player) {
+        if (hasInitiatedConversation) {
+            return;
+        }
+        
+        hasInitiatedConversation = true;
+        
+        String playerName = player.getName().getString();
+        
+        // Walk towards player
+        boolean success = this.getNavigation().moveTo(player, 1.0D);
+        
+        if (success) {
+            AiNpcMod.LOGGER.info("[{}] Approaching player: {}", this.npcName, playerName);
+            
+            // Send greeting to AI
+            String greeting = "I notice " + playerName + " nearby. Should I greet them?";
+            
+            AiBridgeService.sendToAI(
+                "SYSTEM", 
+                this.npcId, 
+                greeting, 
+                new AiBridgeService.Callback() {
+                    @Override
+                    public void onSuccess(NpcInteractionResponse response) {
+                        if (level() instanceof ServerLevel serverLevel) {
+                            serverLevel.getServer().execute(() -> {
+                                if (response != null && response.action != null) {
+                                    String chatResponse = response.action.chatResponse;
+                                    if (chatResponse != null && !chatResponse.isEmpty()) {
+                                        sayInChat(chatResponse);
+                                        
+                                        // Update emotion
+                                        if (response.newState != null && response.newState.emotion != null) {
+                                            setEmotion(response.newState.emotion);
+                                        }
+                                    }
+                                }
+                            });
+                        }
+                    }
+
+                    @Override
+                    public void onFailure(String error) {
+                        // Fallback to generic greeting
+                        sayInChat("*waves* Hello, " + playerName + "!");
+                    }
+                }
+            );
+        }
+    }
+    
+    /**
+     * Make random autonomous comments
+     */
+    private void makeAutonomousComment(Player nearbyPlayer) {
+        String[] comments = {
+            "*looks around curiously*",
+            "*hums thoughtfully*",
+            "Interesting day for research...",
+            "*adjusts spectacles*",
+            "The weather is quite nice today.",
+            "*mutters about experiments*"
+        };
+        
+        String comment = comments[RANDOM.nextInt(comments.length)];
+        sayInChat(comment);
+    }
+    
+    // ==================== INVENTORY METHODS ====================
+    
     public SimpleContainer getInventory() {
         return inventory;
     }
     
-    /**
-     * Add an item to inventory
-     */
     public boolean addItemToInventory(ItemStack stack) {
         if (stack.isEmpty()) {
             return false;
         }
         
-        // Try to add to existing stacks first
         for (int i = 0; i < inventory.getContainerSize(); i++) {
             ItemStack slotStack = inventory.getItem(i);
             if (slotStack.isEmpty()) {
                 inventory.setItem(i, stack.copy());
-                AiNpcMod.LOGGER.info("[Professor G] Added {} to inventory slot {}", 
-                    stack.getHoverName().getString(), i);
+                AiNpcMod.LOGGER.info("[{}] Added {} to inventory slot {}", 
+                    this.npcName, stack.getHoverName().getString(), i);
                 return true;
             } else if (ItemStack.isSameItemSameTags(slotStack, stack) && 
                        slotStack.getCount() < slotStack.getMaxStackSize()) {
@@ -114,21 +257,17 @@ public class ProfessorGEntity extends PathfinderMob {
                 stack.shrink(toAdd);
                 
                 if (stack.isEmpty()) {
-                    AiNpcMod.LOGGER.info("[Professor G] Stacked {} in slot {}", 
-                        slotStack.getHoverName().getString(), i);
+                    AiNpcMod.LOGGER.info("[{}] Stacked {} in slot {}", 
+                        this.npcName, slotStack.getHoverName().getString(), i);
                     return true;
                 }
             }
         }
         
-        // Inventory full
-        AiNpcMod.LOGGER.warn("[Professor G] Inventory is full!");
+        AiNpcMod.LOGGER.warn("[{}] Inventory is full!", this.npcName);
         return false;
     }
     
-    /**
-     * Remove an item from inventory
-     */
     public ItemStack removeItemFromInventory(String itemName) {
         for (int i = 0; i < inventory.getContainerSize(); i++) {
             ItemStack stack = inventory.getItem(i);
@@ -142,8 +281,8 @@ public class ProfessorGEntity extends PathfinderMob {
                     if (stack.isEmpty()) {
                         inventory.setItem(i, ItemStack.EMPTY);
                     }
-                    AiNpcMod.LOGGER.info("[Professor G] Removed {} from inventory slot {}", 
-                        result.getHoverName().getString(), i);
+                    AiNpcMod.LOGGER.info("[{}] Removed {} from inventory slot {}", 
+                        this.npcName, result.getHoverName().getString(), i);
                     return result;
                 }
             }
@@ -151,9 +290,6 @@ public class ProfessorGEntity extends PathfinderMob {
         return ItemStack.EMPTY;
     }
     
-    /**
-     * Check if inventory has a specific item
-     */
     public boolean hasItem(String itemName) {
         for (int i = 0; i < inventory.getContainerSize(); i++) {
             ItemStack stack = inventory.getItem(i);
@@ -170,9 +306,6 @@ public class ProfessorGEntity extends PathfinderMob {
         return false;
     }
     
-    /**
-     * Get inventory contents as string
-     */
     public String getInventoryContents() {
         StringBuilder sb = new StringBuilder();
         int itemCount = 0;
@@ -189,9 +322,6 @@ public class ProfessorGEntity extends PathfinderMob {
         return itemCount > 0 ? sb.toString() : "Empty";
     }
     
-    /**
-     * Drop an item at NPC's position
-     */
     public void dropItem(ItemStack stack) {
         if (!stack.isEmpty() && !this.level().isClientSide) {
             ItemEntity itemEntity = new ItemEntity(
@@ -203,21 +333,24 @@ public class ProfessorGEntity extends PathfinderMob {
             );
             itemEntity.setDefaultPickUpDelay();
             this.level().addFreshEntity(itemEntity);
-            AiNpcMod.LOGGER.info("[Professor G] Dropped {} at position", 
-                stack.getHoverName().getString());
+            AiNpcMod.LOGGER.info("[{}] Dropped {} at position", 
+                this.npcName, stack.getHoverName().getString());
         }
     }
     
-    /**
-     * Save inventory to NBT
-     */
     @Override
     public void addAdditionalSaveData(CompoundTag tag) {
         super.addAdditionalSaveData(tag);
 
+        // Save unique identity
+        tag.putString("NpcId", this.npcId);
+        tag.putString("NpcName", this.npcName);
+        
         tag.putString("CurrentEmotion", this.currentEmotion);
         tag.putString("CurrentObjective", this.currentObjective);
         tag.putLong("LastStateSyncTime", this.lastStateSyncTime);
+        tag.putLong("LastAutonomousAction", this.lastAutonomousAction);
+        tag.putLong("LastPlayerDetection", this.lastPlayerDetection);
 
         CompoundTag inventoryTag = new CompoundTag();
         for (int i = 0; i < inventory.getContainerSize(); i++) {
@@ -232,12 +365,18 @@ public class ProfessorGEntity extends PathfinderMob {
         tag.putString("CurrentTask", currentTask);
     }
     
-    /**
-     * Load inventory from NBT
-     */
     @Override
     public void readAdditionalSaveData(CompoundTag tag) {
         super.readAdditionalSaveData(tag);
+        
+        // Load unique identity
+        if (tag.contains("NpcId")) {
+            this.npcId = tag.getString("NpcId");
+        }
+        if (tag.contains("NpcName")) {
+            this.npcName = tag.getString("NpcName");
+            this.setCustomName(Component.literal(this.npcName));
+        }
         
         if (tag.contains("CurrentEmotion")) {
             this.currentEmotion = tag.getString("CurrentEmotion");
@@ -248,7 +387,12 @@ public class ProfessorGEntity extends PathfinderMob {
         if (tag.contains("LastStateSyncTime")) {
             this.lastStateSyncTime = tag.getLong("LastStateSyncTime");
         }
-        
+        if (tag.contains("LastAutonomousAction")) {
+            this.lastAutonomousAction = tag.getLong("LastAutonomousAction");
+        }
+        if (tag.contains("LastPlayerDetection")) {
+            this.lastPlayerDetection = tag.getLong("LastPlayerDetection");
+        }
 
         if (tag.contains("Inventory")) {
             CompoundTag inventoryTag = tag.getCompound("Inventory");
@@ -264,23 +408,13 @@ public class ProfessorGEntity extends PathfinderMob {
             currentTask = tag.getString("CurrentTask");
         }
     }
-     /**
-     * Get NPC status including emotion
-     */
-    // @Override
-    // public String getCurrentTask() {
-    //     return String.format("%s (feeling: %s)", 
-    //             super.getCurrentTask(), 
-    //             this.currentEmotion);
-    // }
+    
     public String getCurrentTask() {
-    return String.format("%s (feeling: %s)", 
-            this.currentTask, 
-            this.currentEmotion);
-}
-    /**
-     * Drop all inventory items on death
-     */
+        return String.format("%s (feeling: %s)", 
+                this.currentTask, 
+                this.currentEmotion);
+    }
+    
     @Override
     protected void dropCustomDeathLoot(net.minecraft.world.damagesource.DamageSource source, int lootingLevel, boolean allowDrops) {
         super.dropCustomDeathLoot(source, lootingLevel, allowDrops);
@@ -292,6 +426,9 @@ public class ProfessorGEntity extends PathfinderMob {
                 dropItem(stack);
             }
         }
+        
+        // Clear memory on death (will be handled by Python backend)
+        AiNpcMod.LOGGER.info("[{}] Died - memory will be cleared", this.npcName);
     }
     
     // ==================== AI ACTION METHODS ====================
@@ -301,7 +438,8 @@ public class ProfessorGEntity extends PathfinderMob {
             return;
         }
         
-        AiNpcMod.LOGGER.info("[Professor G] Executing action: {} with params: {}", action, actionParams);
+        AiNpcMod.LOGGER.info("[{}] Executing action: {} with params: {}", 
+            this.npcName, action, actionParams);
         
         if (action == null) {
             return;
@@ -352,7 +490,7 @@ public class ProfessorGEntity extends PathfinderMob {
                 break;
                 
             default:
-                AiNpcMod.LOGGER.warn("[Professor G] Unknown action: {}", action);
+                AiNpcMod.LOGGER.warn("[{}] Unknown action: {}", this.npcName, action);
                 sayInChat("*looks confused* I'm not sure how to do that...");
         }
     }
@@ -374,12 +512,14 @@ public class ProfessorGEntity extends PathfinderMob {
     public void sayInChat(String message) {
         if (!this.level().isClientSide && this.level() instanceof ServerLevel serverLevel) {
             serverLevel.getServer().getPlayerList().broadcastSystemMessage(
-                Component.literal("§e[Professor G]§r " + message), 
+                Component.literal("§e[" + this.npcName + "]§r " + message), 
                 false
             );
-            AiNpcMod.LOGGER.info("[Professor G] Said: {}", message);
+            AiNpcMod.LOGGER.info("[{}] Said: {}", this.npcName, message);
         }
     }
+    
+    // ... [Rest of the action handler methods remain the same, just using this.npcName for logging]
     
     private void handleMoveToAction(String params) {
         if (params == null || params.isEmpty()) {
@@ -402,11 +542,8 @@ public class ProfessorGEntity extends PathfinderMob {
                     if (success) {
                         sayInChat(String.format("On my way to %s! (%.1f blocks away)", 
                             playerName, distance));
-                        AiNpcMod.LOGGER.info("[Professor G] Moving to player {} at {}", 
-                            playerName, targetPlayer.blockPosition());
                     } else {
                         sayInChat("I can't find a path to " + playerName + "!");
-                        AiNpcMod.LOGGER.warn("[Professor G] Pathfinding failed - no valid path");
                     }
                 } else {
                     sayInChat("I can't find " + playerName + "!");
@@ -439,17 +576,13 @@ public class ProfessorGEntity extends PathfinderMob {
                         
                         sayInChat(String.format("Heading to (%d, %d, %d)! That's %.1f blocks away.", 
                             x, y, z, distance));
-                        
-                        AiNpcMod.LOGGER.info("[Professor G] Pathfinding to {} - Current pos: {}", 
-                            targetPos, this.blockPosition());
                     } else {
                         sayInChat("*stumbles* I can't find a path there...");
-                        AiNpcMod.LOGGER.warn("[Professor G] Pathfinding failed to {} - Target may be unreachable", targetPos);
                     }
                 }
             }
         } catch (Exception e) {
-            AiNpcMod.LOGGER.error("[Professor G] Error in move_to action", e);
+            AiNpcMod.LOGGER.error("[{}] Error in move_to action", this.npcName, e);
             sayInChat("*stumbles* I can't quite navigate there...");
         }
     }
@@ -498,8 +631,6 @@ public class ProfessorGEntity extends PathfinderMob {
             this.goalSelector.addGoal(1, followGoal);
             
             sayInChat("I'll follow " + targetPlayer.getName().getString() + "!");
-            AiNpcMod.LOGGER.info("[Professor G] Following player: {}", 
-                targetPlayer.getName().getString());
         } else {
             sayInChat("*looks around* Who should I follow?");
         }
@@ -512,8 +643,6 @@ public class ProfessorGEntity extends PathfinderMob {
         
         String targetType = params.toLowerCase().trim();
         final LivingEntity target;
-        
-        AiNpcMod.LOGGER.info("[Professor G] Searching for attack target: {}", targetType);
         
         if (targetType.contains("pig")) {
             target = this.level().getNearestEntity(
@@ -558,13 +687,8 @@ public class ProfessorGEntity extends PathfinderMob {
             this.targetSelector.addGoal(1, targetGoal);
             
             sayInChat("*charges* Engaging " + target.getType().getDescription().getString() + "!");
-            AiNpcMod.LOGGER.info("[Professor G] Attacking {} at distance {} - Target set: {}", 
-                target.getType().getDescription().getString(), 
-                this.distanceTo(target),
-                this.getTarget() != null);
         } else {
             sayInChat("*looks around* I don't see any " + targetType + " nearby...");
-            AiNpcMod.LOGGER.warn("[Professor G] No target found for: {}", targetType);
         }
     }
     
@@ -574,7 +698,6 @@ public class ProfessorGEntity extends PathfinderMob {
         
         if (success) {
             this.swing(net.minecraft.world.InteractionHand.MAIN_HAND);
-            AiNpcMod.LOGGER.info("[Professor G] Successfully attacked target!");
         }
         
         return success;
@@ -587,8 +710,6 @@ public class ProfessorGEntity extends PathfinderMob {
         }
         
         String blockType = params.toLowerCase().trim();
-        AiNpcMod.LOGGER.info("[Professor G] Looking for block to mine: {}", blockType);
-        
         BlockPos nearestBlock = findNearbyBlock(blockType, 16);
         
         if (nearestBlock != null) {
@@ -612,7 +733,6 @@ public class ProfessorGEntity extends PathfinderMob {
             }
         } else {
             sayInChat("I don't see any " + blockType + " nearby...");
-            AiNpcMod.LOGGER.warn("[Professor G] No {} found nearby", blockType);
         }
     }
     
@@ -623,8 +743,8 @@ public class ProfessorGEntity extends PathfinderMob {
             for (int y = -radius; y <= radius; y++) {
                 for (int z = -radius; z <= radius; z++) {
                     BlockPos checkPos = npcPos.offset(x, y, z);
-                    BlockState state = this.level().getBlockState(checkPos);
-                    Block block = state.getBlock();
+                    var state = this.level().getBlockState(checkPos);
+                    var block = state.getBlock();
                     
                     String blockName = block.getDescriptionId().toLowerCase();
                     
@@ -643,7 +763,7 @@ public class ProfessorGEntity extends PathfinderMob {
         if (this.level() instanceof ServerLevel serverLevel) {
             serverLevel.getServer().execute(() -> {
                 try {
-                    Thread.sleep(delayTicks * 50);
+                    Thread.sleep(delayTicks * 50L);
                     
                     if (this.distanceToSqr(Vec3.atCenterOf(pos)) < 16.0D) {
                         serverLevel.destroyBlock(pos, true);
@@ -703,8 +823,6 @@ public class ProfessorGEntity extends PathfinderMob {
             default:
                 sayInChat("*" + emote + "*");
         }
-        
-        AiNpcMod.LOGGER.info("[Professor G] Emoted: {}", emote);
     }
     
     private void handleGiveItemAction(String params) {
@@ -713,18 +831,15 @@ public class ProfessorGEntity extends PathfinderMob {
             return;
         }
         
-        // Find nearest player
         Player nearestPlayer = this.level().getNearestPlayer(this, 10.0D);
         if (nearestPlayer == null) {
             sayInChat("*looks around* I don't see anyone nearby to give this to...");
             return;
         }
         
-        // Try to find item in inventory
         ItemStack itemToGive = removeItemFromInventory(params);
         
         if (!itemToGive.isEmpty()) {
-            // Drop the item near the player
             ItemEntity itemEntity = new ItemEntity(
                 this.level(),
                 nearestPlayer.getX(),
@@ -739,13 +854,8 @@ public class ProfessorGEntity extends PathfinderMob {
             sayInChat(String.format("*hands over* Here's %s for you, %s!", 
                 itemToGive.getHoverName().getString(),
                 nearestPlayer.getName().getString()));
-            
-            AiNpcMod.LOGGER.info("[Professor G] Gave {} to {}", 
-                itemToGive.getHoverName().getString(),
-                nearestPlayer.getName().getString());
         } else {
             sayInChat(String.format("*checks pockets* I don't have any %s right now...", params));
-            AiNpcMod.LOGGER.info("[Professor G] Tried to give {} but don't have it", params);
         }
     }
     
@@ -758,7 +868,6 @@ public class ProfessorGEntity extends PathfinderMob {
         
         if (nearbyItems.isEmpty()) {
             sayInChat("*looks around* I don't see any items on the ground...");
-            AiNpcMod.LOGGER.info("[Professor G] No items found nearby");
             return;
         }
         
@@ -781,13 +890,11 @@ public class ProfessorGEntity extends PathfinderMob {
             this.currentTask = "picking_up_item";
             
             if (distance < 2.0D) {
-                // Pick up the item into inventory
                 ItemStack pickupStack = closestItem.getItem().copy();
                 if (addItemToInventory(pickupStack)) {
                     closestItem.discard();
                     sayInChat(String.format("*picks up* Got %d %s!", itemCount, itemName));
                     spawnParticles("happy_villager");
-                    AiNpcMod.LOGGER.info("[Professor G] Picked up {} x{}", itemName, itemCount);
                 } else {
                     sayInChat("*tries to pick up* My pockets are full!");
                 }
@@ -796,9 +903,6 @@ public class ProfessorGEntity extends PathfinderMob {
                 
                 if (success) {
                     sayInChat(String.format("I see %d %s! Going to get it...", itemCount, itemName));
-                    AiNpcMod.LOGGER.info("[Professor G] Moving to pick up {} at distance {}", 
-                        itemName, distance);
-                    
                     this.targetPickupItem = closestItem;
                 } else {
                     sayInChat("I can't reach that " + itemName + "...");
@@ -810,7 +914,6 @@ public class ProfessorGEntity extends PathfinderMob {
     private void handleIdleAction() {
         clearDynamicGoals();
         this.currentTask = "idle";
-        AiNpcMod.LOGGER.info("[Professor G] Now idling");
     }
     
     private void spawnParticles(String particleType) {
@@ -845,78 +948,52 @@ public class ProfessorGEntity extends PathfinderMob {
                 );
             }
         } catch (Exception e) {
-            AiNpcMod.LOGGER.error("[Professor G] Failed to spawn particles", e);
+            AiNpcMod.LOGGER.error("[{}] Failed to spawn particles", this.npcName, e);
         }
-        
     }
-
     
-    /**
-     * Set NPC emotion (updates display and behavior)
-     */
+    // ==================== STATE MANAGEMENT ====================
+    
     public void setEmotion(String emotion) {
         if (emotion != null && !emotion.equals(this.currentEmotion)) {
             this.currentEmotion = emotion;
-            AiNpcMod.LOGGER.info("[Professor G] Emotion changed to: {}", emotion);
-            
-            // Show emotion particles
             spawnEmotionParticles(emotion);
         }
     }
 
-    /**
-     * Get current emotion
-     */
     public String getEmotion() {
         return this.currentEmotion;
     }
 
-    /**
-     * Set current objective
-     */
     public void setCurrentObjective(String objective) {
         if (objective != null) {
             this.currentObjective = objective;
-            AiNpcMod.LOGGER.debug("[Professor G] Objective: {}", objective);
         }
     }
 
-    /**
-     * Get current objective
-     */
     public String getCurrentObjective() {
         return this.currentObjective;
     }
 
-    /**
-     * Update NPC from AI state response
-     */
     public void updateFromState(StatePayload state) {
         if (state == null) return;
 
-        // Update emotion
         if (state.emotion != null) {
             setEmotion(state.emotion);
         }
 
-        // Update objective
         if (state.currentObjective != null) {
             setCurrentObjective(state.currentObjective);
         }
 
-        // Update position if provided
         if (state.x != null && state.z != null) {
-            // Position is informational - actual movement handled by actions
-            AiNpcMod.LOGGER.debug("[Professor G] Backend position: ({}, {})",
-                    state.x, state.z);
+            AiNpcMod.LOGGER.debug("[{}] Backend position: ({}, {})",
+                    this.npcName, state.x, state.z);
         }
     }
 
-    /**
-     * Spawn particles based on emotion
-     */
     private void spawnEmotionParticles(String emotion) {
-        if (this.level().isClientSide || !(this.level() instanceof ServerLevel serverLevel)) {
+        if (this.level().isClientSide || !(this.level() instanceof ServerLevel)) {
             return;
         }
 
@@ -947,9 +1024,11 @@ public class ProfessorGEntity extends PathfinderMob {
                 lastStateSyncTime = currentTime;
                 ChatHandler.syncNPCState(this);
             }
+            
+            // AUTONOMOUS BEHAVIOR - check for nearby players
+            performAutonomousBehavior();
 
-        
-        if (!this.level().isClientSide) {
+            // Task completion checks
             if ("moving_to_coords".equals(currentTask) && targetPosition != null) {
                 if (this.getNavigation().isDone()) {
                     double distanceToTarget = this.position().distanceTo(Vec3.atCenterOf(targetPosition));
@@ -1001,7 +1080,6 @@ public class ProfessorGEntity extends PathfinderMob {
                         String itemName = targetPickupItem.getItem().getHoverName().getString();
                         int itemCount = targetPickupItem.getItem().getCount();
                         
-                        // Pick up into inventory
                         ItemStack pickupStack = targetPickupItem.getItem().copy();
                         if (addItemToInventory(pickupStack)) {
                             targetPickupItem.discard();
@@ -1019,20 +1097,7 @@ public class ProfessorGEntity extends PathfinderMob {
                         this.getNavigation().moveTo(targetPickupItem, 1.2D);
                     }
                 }
-                
             }
-            
-            
-        }}
-        
-        
+        }
     }
-    
-    
-    // public String getCurrentTask() {
-    //     return currentTask;
-    // }
-
-    
-    
 }
