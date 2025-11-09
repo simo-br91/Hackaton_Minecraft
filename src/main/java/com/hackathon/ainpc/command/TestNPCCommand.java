@@ -40,45 +40,55 @@ public class TestNPCCommand {
     }
     
     private static int showHelp(CommandContext<CommandSourceStack> context) {
-        context.getSource().sendSuccess(() -> 
-            Component.literal("§e=== Professor G Test Commands ===\n" +
-                "§6Basic Actions:§r\n" +
-                "§f/testnpc say <message> §7- Make NPC say something\n" +
-                "§f/testnpc move_to <x,y,z> §7- Move to coordinates\n" +
-                "§f/testnpc move_to player:<n> §7- Move to player\n" +
-                "§f/testnpc follow [player] §7- Follow player\n" +
-                "§f/testnpc attack_target <type> §7- Attack entity (pig, nearest)\n" +
-                "§f/testnpc emote <emotion> §7- Show emotion\n" +
-                "§f/testnpc mine_block <block> §7- Mine nearby block\n" +
-                "§f/testnpc pickup_item §7- Pick up nearby items\n" +
-                "§f/testnpc give_item <item> §7- Give item to nearest player\n\n" +
-                "§6Inventory Commands:§r\n" +
-                "§f/testnpc inventory §7- Show inventory contents\n" +
-                "§f/testnpc give <item> [amount] §7- Give item to NPC (e.g., diamond 5)\n" +
-                "§f/testnpc drop <item> §7- Make NPC drop an item\n" +
-                "§f/testnpc clear_inventory §7- Clear NPC's inventory\n\n" +
-                "§6Status:§r\n" +
-                "§f/testnpc status §7- Show NPC status"
-            ), false);
-        return 1;
-    }
+    context.getSource().sendSuccess(() -> 
+        Component.literal("§e=== Professor G Test Commands ===\n" +
+            "§6Basic Actions:§r\n" +
+            "§f/testnpc say <message> §7- Make NPC say something\n" +
+            "§f/testnpc move_to <x,y,z> §7- Move to coordinates\n" +
+            "§f/testnpc move_to player:<name> §7- Move to player\n" +
+            "§f/testnpc follow [player] §7- Follow player\n" +
+            "§f/testnpc attack_target <type> §7- Attack entity (pig, nearest)\n" +
+            "§f/testnpc emote <emotion> §7- Show emotion\n" +
+            "§f/testnpc mine_block <block> §7- Mine nearby block\n" +
+            "§f/testnpc pickup_item §7- Pick up nearby items\n" +
+            "§f/testnpc give_item <item> §7- Give item to nearest player\n" +
+            "§f/testnpc drink_potion [type] §7- Drink a potion from inventory\n\n" +
+            "§6Inventory Commands:§r\n" +
+            "§f/testnpc inventory §7- Show inventory contents\n" +
+            "§f/testnpc give <item> [amount] §7- Give item to NPC (e.g., diamond 5)\n" +
+            "§f/testnpc give_potion <type> [strong] §7- Give potion (healing, strength, speed, etc.)\n" +
+            "§f/testnpc drop <item> §7- Make NPC drop an item\n" +
+            "§f/testnpc clear_inventory §7- Clear NPC's inventory\n\n" +
+            "§6Potion Testing:§r\n" +
+            "§f/testnpc give_potion healing §7- Give regular healing potion\n" +
+            "§f/testnpc give_potion healing strong §7- Give strong healing potion\n" +
+            "§f/testnpc give_potion strength §7- Give strength potion\n" +
+            "§f/testnpc drink_potion §7- Make NPC drink any potion\n" +
+            "§f/testnpc drink_potion healing §7- Make NPC drink healing potion\n\n" +
+            "§6Status:§r\n" +
+            "§f/testnpc status §7- Show NPC status"
+        ), false);
+    return 1;
+}
     
     private static int executeAction(CommandContext<CommandSourceStack> context, String params) {
-        String action = StringArgumentType.getString(context, "action");
-        CommandSourceStack source = context.getSource();
-        
-        // Handle special commands
-        if ("status".equals(action)) {
-            return showStatus(context);
-        } else if ("inventory".equals(action)) {
-            return showInventory(context);
-        } else if ("give".equals(action)) {
-            return giveItemToNPC(context, params);
-        } else if ("drop".equals(action)) {
-            return makeNPCDropItem(context, params);
-        } else if ("clear_inventory".equals(action)) {
-            return clearNPCInventory(context);
-        }
+    String action = StringArgumentType.getString(context, "action");
+    CommandSourceStack source = context.getSource();
+    
+    // Handle special commands
+    if ("status".equals(action)) {
+        return showStatus(context);
+    } else if ("inventory".equals(action)) {
+        return showInventory(context);
+    } else if ("give".equals(action)) {
+        return giveItemToNPC(context, params);
+    } else if ("give_potion".equals(action)) {
+        return givePotionToNPC(context, params);
+    } else if ("drop".equals(action)) {
+        return makeNPCDropItem(context, params);
+    } else if ("clear_inventory".equals(action)) {
+        return clearNPCInventory(context);
+    }
         
         try {
             ServerLevel level = source.getLevel();
@@ -354,4 +364,121 @@ public class TestNPCCommand {
         
         return nearest;
     }
+    // Add these methods to TestNPCCommand.java
+
+/**
+ * Give a potion to the NPC
+ * Usage: /testnpc give_potion <type> [strength]
+ * Examples: 
+ *   /testnpc give_potion healing
+ *   /testnpc give_potion strength strong
+ *   /testnpc give_potion speed
+ */
+private static int givePotionToNPC(CommandContext<CommandSourceStack> context, String params) {
+    CommandSourceStack source = context.getSource();
+    
+    if (params == null || params.isEmpty()) {
+        source.sendFailure(Component.literal("§cUsage: /testnpc give_potion <type> [strength]"));
+        source.sendSuccess(() -> 
+            Component.literal("§7Available potions: healing, regeneration, strength, speed, " +
+                "fire_resistance, water_breathing, night_vision, invisibility, jump_boost"), 
+            false);
+        return 0;
+    }
+    
+    try {
+        ServerLevel level = source.getLevel();
+        ProfessorGEntity npc = findNearestProfessorG(level, source.getPosition());
+        
+        if (npc == null) {
+            source.sendFailure(Component.literal("§cNo Professor G found nearby!"));
+            return 0;
+        }
+        
+        String[] parts = params.split(" ");
+        String potionType = parts[0].toLowerCase();
+        boolean isStrong = parts.length > 1 && parts[1].equalsIgnoreCase("strong");
+        
+        // Create potion
+        ItemStack potionStack = createPotion(potionType, isStrong);
+        
+        if (potionStack == null || potionStack.isEmpty()) {
+            source.sendFailure(Component.literal("§cInvalid potion type: " + potionType));
+            return 0;
+        }
+        
+        // Give to NPC
+        boolean success = npc.addItemToInventory(potionStack);
+        
+        if (success) {
+            final String potionName = potionStack.getHoverName().getString();
+            source.sendSuccess(() -> 
+                Component.literal(String.format("§aGave %s to Professor G!", potionName)), 
+                false);
+            npc.sayInChat(String.format("*receives potion* A %s! Thank you!", potionName));
+            return 1;
+        } else {
+            source.sendFailure(Component.literal("§cProfessor G's inventory is full!"));
+            npc.sayInChat("My pockets are full!");
+            return 0;
+        }
+        
+    } catch (Exception e) {
+        source.sendFailure(Component.literal("§cError: " + e.getMessage()));
+        AiNpcMod.LOGGER.error("[TestCommand] Error giving potion", e);
+        return 0;
+    }
+}
+
+/**
+ * Helper method to create potion ItemStack
+ */
+private static ItemStack createPotion(String type, boolean isStrong) {
+    net.minecraft.world.item.alchemy.Potion potion = switch (type.toLowerCase()) {
+        case "healing" -> isStrong ? 
+            net.minecraft.world.item.alchemy.Potions.STRONG_HEALING : 
+            net.minecraft.world.item.alchemy.Potions.HEALING;
+        case "regeneration" -> isStrong ? 
+            net.minecraft.world.item.alchemy.Potions.STRONG_REGENERATION : 
+            net.minecraft.world.item.alchemy.Potions.REGENERATION;
+        case "strength" -> isStrong ? 
+            net.minecraft.world.item.alchemy.Potions.STRONG_STRENGTH : 
+            net.minecraft.world.item.alchemy.Potions.STRENGTH;
+        case "speed", "swiftness" -> isStrong ? 
+            net.minecraft.world.item.alchemy.Potions.STRONG_SWIFTNESS : 
+            net.minecraft.world.item.alchemy.Potions.SWIFTNESS;
+        case "fire_resistance" -> 
+            net.minecraft.world.item.alchemy.Potions.FIRE_RESISTANCE;
+        case "water_breathing" -> 
+            net.minecraft.world.item.alchemy.Potions.WATER_BREATHING;
+        case "night_vision" -> 
+            net.minecraft.world.item.alchemy.Potions.NIGHT_VISION;
+        case "invisibility" -> 
+            net.minecraft.world.item.alchemy.Potions.INVISIBILITY;
+        case "jump", "jump_boost", "leaping" -> isStrong ? 
+            net.minecraft.world.item.alchemy.Potions.STRONG_LEAPING : 
+            net.minecraft.world.item.alchemy.Potions.LEAPING;
+        case "poison" -> isStrong ? 
+            net.minecraft.world.item.alchemy.Potions.STRONG_POISON : 
+            net.minecraft.world.item.alchemy.Potions.POISON;
+        case "weakness" -> 
+            net.minecraft.world.item.alchemy.Potions.WEAKNESS;
+        case "slowness" -> isStrong ? 
+            net.minecraft.world.item.alchemy.Potions.STRONG_SLOWNESS : 
+            net.minecraft.world.item.alchemy.Potions.SLOWNESS;
+        case "harming" -> isStrong ? 
+            net.minecraft.world.item.alchemy.Potions.STRONG_HARMING : 
+            net.minecraft.world.item.alchemy.Potions.HARMING;
+        default -> null;
+    };
+    
+    if (potion == null) {
+        return ItemStack.EMPTY;
+    }
+    
+    ItemStack stack = new ItemStack(Items.POTION);
+    net.minecraft.world.item.alchemy.PotionUtils.setPotion(stack, potion);
+    return stack;
+}
+
 }

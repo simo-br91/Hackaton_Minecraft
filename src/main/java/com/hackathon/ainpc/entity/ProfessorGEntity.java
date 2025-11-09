@@ -22,6 +22,11 @@ import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.monster.Monster;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.item.PotionItem;
+import net.minecraft.world.item.alchemy.PotionUtils;
+import net.minecraft.world.item.alchemy.Potions;
+import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -29,6 +34,7 @@ import com.hackathon.ainpc.handler.ChatHandler;
 
 import java.util.UUID;
 import java.util.Random;
+import java.util.List;
 
 public class ProfessorGEntity extends PathfinderMob {
     // List of possible NPC names
@@ -73,6 +79,12 @@ public class ProfessorGEntity extends PathfinderMob {
     private static final long PLAYER_DETECTION_COOLDOWN = 30000; // 30 seconds between approaches
     private boolean hasInitiatedConversation = false;
 
+    // Potion system
+    private long lastPotionCheck = 0;
+    private static final long POTION_CHECK_INTERVAL = 10000; // Check every 10 seconds
+    private static final float HEALTH_THRESHOLD_LOW = 0.5f; // 50% health
+    private static final float HEALTH_THRESHOLD_CRITICAL = 0.3f; // 30% health
+
     public ProfessorGEntity(EntityType<? extends PathfinderMob> type, Level level) {
         super(type, level);
         
@@ -115,6 +127,252 @@ public class ProfessorGEntity extends PathfinderMob {
      */
     public String getNpcName() {
         return this.npcName;
+    }
+    
+    // ==================== POTION SYSTEM ====================
+    
+    /**
+     * Check if NPC needs to drink a potion and do so autonomously
+     */
+    private void checkAndDrinkPotions() {
+        long currentTime = System.currentTimeMillis();
+        
+        // Only check every 10 seconds
+        if (currentTime - lastPotionCheck < POTION_CHECK_INTERVAL) {
+            return;
+        }
+        
+        lastPotionCheck = currentTime;
+        
+        // Check health percentage
+        float healthPercent = this.getHealth() / this.getMaxHealth();
+        
+        // Critical health - prioritize healing
+        if (healthPercent < HEALTH_THRESHOLD_CRITICAL) {
+            if (drinkBestHealingPotion()) {
+                sayInChat("*urgently drinks healing potion* I needed that!");
+                return;
+            }
+        }
+        
+        // Low health - drink healing if available
+        if (healthPercent < HEALTH_THRESHOLD_LOW) {
+            if (drinkBestHealingPotion()) {
+                sayInChat("*drinks healing potion* That's better.");
+                return;
+            }
+        }
+        
+        // If in combat, consider drinking buff potions
+        if (this.getTarget() != null && this.getTarget().isAlive()) {
+            // Try strength potion first
+            if (drinkPotionByEffect("strength")) {
+                sayInChat("*drinks strength potion* Time to fight!");
+                return;
+            }
+            // Try speed potion
+            if (drinkPotionByEffect("speed")) {
+                sayInChat("*drinks swiftness potion* Let's go!");
+                return;
+            }
+        }
+        
+        // Random chance to drink buff potions when idle (5%)
+        if (RANDOM.nextInt(100) < 5 && "idle".equals(currentTask)) {
+            if (drinkRandomBuffPotion()) {
+                return;
+            }
+        }
+    }
+    
+    /**
+     * Drink the best available healing potion
+     */
+    private boolean drinkBestHealingPotion() {
+        // Priority: Strong Healing > Healing > Regeneration
+        if (drinkPotionByEffect("strong_healing")) {
+            return true;
+        }
+        if (drinkPotionByEffect("healing")) {
+            return true;
+        }
+        if (drinkPotionByEffect("regeneration")) {
+            return true;
+        }
+        return false;
+    }
+    
+    /**
+     * Drink a random buff potion (for fun/roleplay)
+     */
+    private boolean drinkRandomBuffPotion() {
+        String[] buffEffects = {"strength", "speed", "fire_resistance", "water_breathing", "night_vision", "invisibility", "jump_boost"};
+        String randomEffect = buffEffects[RANDOM.nextInt(buffEffects.length)];
+        
+        if (drinkPotionByEffect(randomEffect)) {
+            sayInChat("*drinks " + randomEffect.replace("_", " ") + " potion* Interesting effects!");
+            return true;
+        }
+        return false;
+    }
+    
+    /**
+     * Find and drink a potion with specific effect
+     */
+    private boolean drinkPotionByEffect(String effectName) {
+        for (int i = 0; i < inventory.getContainerSize(); i++) {
+            ItemStack stack = inventory.getItem(i);
+            if (!stack.isEmpty() && stack.getItem() instanceof PotionItem) {
+                String potionName = PotionUtils.getPotion(stack).getName("").toLowerCase();
+                
+                if (potionName.contains(effectName.toLowerCase())) {
+                    return drinkPotionFromSlot(i);
+                }
+            }
+        }
+        return false;
+    }
+    
+    /**
+     * Drink potion from specific inventory slot
+     */
+    private boolean drinkPotionFromSlot(int slot) {
+        ItemStack potionStack = inventory.getItem(slot);
+        
+        if (potionStack.isEmpty() || !(potionStack.getItem() instanceof PotionItem)) {
+            return false;
+        }
+        
+        // Get potion effects
+        List<MobEffectInstance> effects = PotionUtils.getMobEffects(potionStack);
+        String potionName = PotionUtils.getPotion(potionStack).getName("");
+        
+        AiNpcMod.LOGGER.info("[{}] Drinking potion: {}", this.npcName, potionName);
+        
+        // Apply effects
+        for (MobEffectInstance effect : effects) {
+            this.addEffect(new MobEffectInstance(effect));
+        }
+        
+        // Instant health/damage effects
+        if (PotionUtils.getPotion(potionStack) == Potions.HEALING) {
+            this.heal(4.0F);
+        } else if (PotionUtils.getPotion(potionStack) == Potions.STRONG_HEALING) {
+            this.heal(8.0F);
+        }
+        
+        // Spawn particles
+        spawnPotionParticles();
+        
+        // Play drinking sound
+        this.playSound(net.minecraft.sounds.SoundEvents.GENERIC_DRINK, 1.0F, 1.0F);
+        
+        // Remove potion from inventory (consume it)
+        potionStack.shrink(1);
+        if (potionStack.isEmpty()) {
+            inventory.setItem(slot, ItemStack.EMPTY);
+        }
+        
+        // Add empty bottle
+        ItemStack bottle = new ItemStack(Items.GLASS_BOTTLE);
+        if (!addItemToInventory(bottle)) {
+            dropItem(bottle); // Drop if inventory full
+        }
+        
+        return true;
+    }
+    
+    /**
+     * Drink a specific potion by name (called by AI or command)
+     */
+    public boolean drinkPotionByName(String potionName) {
+        for (int i = 0; i < inventory.getContainerSize(); i++) {
+            ItemStack stack = inventory.getItem(i);
+            if (!stack.isEmpty() && stack.getItem() instanceof PotionItem) {
+                String stackName = stack.getHoverName().getString().toLowerCase();
+                String potionType = PotionUtils.getPotion(stack).getName("").toLowerCase();
+                
+                if (stackName.contains(potionName.toLowerCase()) || 
+                    potionType.contains(potionName.toLowerCase())) {
+                    
+                    String displayName = stack.getHoverName().getString();
+                    sayInChat("*drinks " + displayName + "*");
+                    return drinkPotionFromSlot(i);
+                }
+            }
+        }
+        
+        sayInChat("I don't have any " + potionName + " potion...");
+        return false;
+    }
+    
+    /**
+     * Check if NPC has any potion
+     */
+    public boolean hasPotion(String potionName) {
+        for (int i = 0; i < inventory.getContainerSize(); i++) {
+            ItemStack stack = inventory.getItem(i);
+            if (!stack.isEmpty() && stack.getItem() instanceof PotionItem) {
+                if (potionName == null || potionName.isEmpty()) {
+                    return true; // Any potion
+                }
+                
+                String stackName = stack.getHoverName().getString().toLowerCase();
+                String potionType = PotionUtils.getPotion(stack).getName("").toLowerCase();
+                
+                if (stackName.contains(potionName.toLowerCase()) || 
+                    potionType.contains(potionName.toLowerCase())) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+    
+    /**
+     * Get health status as a string
+     */
+    public String getHealthStatus() {
+        float percent = (this.getHealth() / this.getMaxHealth()) * 100;
+        
+        if (percent >= 90) {
+            return "excellent";
+        } else if (percent >= 70) {
+            return "good";
+        } else if (percent >= 50) {
+            return "okay";
+        } else if (percent >= 30) {
+            return "hurt";
+        } else {
+            return "badly hurt";
+        }
+    }
+    
+    /**
+     * Spawn particle effects for drinking potion
+     */
+    private void spawnPotionParticles() {
+        if (this.level().isClientSide || !(this.level() instanceof ServerLevel serverLevel)) {
+            return;
+        }
+        
+        try {
+            for (int i = 0; i < 8; i++) {
+                double offsetX = (this.random.nextDouble() - 0.5) * 0.3;
+                double offsetY = this.random.nextDouble() * 0.5 + 1.5;
+                double offsetZ = (this.random.nextDouble() - 0.5) * 0.3;
+                
+                serverLevel.sendParticles(
+                    net.minecraft.core.particles.ParticleTypes.EFFECT,
+                    this.getX() + offsetX,
+                    this.getY() + offsetY,
+                    this.getZ() + offsetZ,
+                    1, 0, 0, 0, 0
+                );
+            }
+        } catch (Exception e) {
+            AiNpcMod.LOGGER.error("[{}] Failed to spawn potion particles", this.npcName, e);
+        }
     }
     
     // ==================== AUTONOMOUS BEHAVIOR ====================
@@ -351,6 +609,7 @@ public class ProfessorGEntity extends PathfinderMob {
         tag.putLong("LastStateSyncTime", this.lastStateSyncTime);
         tag.putLong("LastAutonomousAction", this.lastAutonomousAction);
         tag.putLong("LastPlayerDetection", this.lastPlayerDetection);
+        tag.putLong("LastPotionCheck", this.lastPotionCheck);
 
         CompoundTag inventoryTag = new CompoundTag();
         for (int i = 0; i < inventory.getContainerSize(); i++) {
@@ -392,6 +651,9 @@ public class ProfessorGEntity extends PathfinderMob {
         }
         if (tag.contains("LastPlayerDetection")) {
             this.lastPlayerDetection = tag.getLong("LastPlayerDetection");
+        }
+        if (tag.contains("LastPotionCheck")) {
+            this.lastPotionCheck = tag.getLong("LastPotionCheck");
         }
 
         if (tag.contains("Inventory")) {
@@ -485,6 +747,10 @@ public class ProfessorGEntity extends PathfinderMob {
                 handlePickupItemAction(actionParams);
                 break;
                 
+            case "drink_potion":
+                handleDrinkPotionAction(actionParams);
+                break;
+                
             case "idle":
                 handleIdleAction();
                 break;
@@ -519,7 +785,22 @@ public class ProfessorGEntity extends PathfinderMob {
         }
     }
     
-    // ... [Rest of the action handler methods remain the same, just using this.npcName for logging]
+    private void handleDrinkPotionAction(String params) {
+        if (params == null || params.isEmpty()) {
+            // Drink any healing potion
+            if (drinkBestHealingPotion()) {
+                sayInChat("*drinks healing potion* Refreshing!");
+            } else if (hasPotion(null)) {
+                // Drink any potion
+                drinkRandomBuffPotion();
+            } else {
+                sayInChat("I don't have any potions to drink...");
+            }
+        } else {
+            // Drink specific potion
+            drinkPotionByName(params);
+        }
+    }
     
     private void handleMoveToAction(String params) {
         if (params == null || params.isEmpty()) {
@@ -1027,6 +1308,9 @@ public class ProfessorGEntity extends PathfinderMob {
             
             // AUTONOMOUS BEHAVIOR - check for nearby players
             performAutonomousBehavior();
+            
+            // POTION SYSTEM - check if NPC needs to drink potions
+            checkAndDrinkPotions();
 
             // Task completion checks
             if ("moving_to_coords".equals(currentTask) && targetPosition != null) {
